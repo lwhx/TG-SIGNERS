@@ -98,6 +98,13 @@ export function BackupManagement() {
       toast.success("已暂存恢复数据；请人工重启容器以执行冷启动恢复");
     });
   };
+  const cancelRestore = () => {
+    if(!window.confirm("取消尚未重启执行的恢复计划？这不会修改当前数据库。"))return;
+    void action("cancel",async()=>{
+      await post("/maintenance/backups/restore-cancel",{confirmation:"CANCEL"});
+      toast.success("已取消待恢复计划；当前服务数据保持不变");
+    });
+  };
   const remove = (id:string) => {
     if(!window.confirm("永久删除本地加密备份 "+id.slice(0,8)+"？此操作无法撤销。"))return;
     void action("delete-"+id,async()=>{
@@ -143,6 +150,7 @@ export function BackupManagement() {
     {state.pending && <div className="rounded-lg border border-amber-300 p-3 text-xs leading-6">
       <strong>待冷启动恢复：</strong>{state.pending.id.slice(0,12)} · {fmt(state.pending.created_at)}
       <p>必须人工执行 Docker 容器重启。请勿在恢复完成前重新发起其他恢复；系统会在启动时保留原数据回退副本。</p>
+      <Button type="button" size="sm" variant="outline" className="mt-2" disabled={Boolean(busy)} onClick={cancelRestore}>取消待恢复</Button>
     </div>}
     {state.last && <p className="text-xs text-muted">
       最近恢复：{state.last.status==="completed"?"已完成":"已回滚"} ·
