@@ -513,3 +513,8 @@ After migrating to SQLite, new check-in records are written only to
 `data.sqlite3`, but old `sign_record.json` files can still be read. If legacy
 JSON is detected while running a task, the program prints a notice and tries to
 import that task's historical records into SQLite automatically.
+
+
+## Dashboard relay P4
+
+The embedded Dashboard relay extension supports uncertain delivery review and opt-in bounded retries. Timeouts, connection loss and interrupted sends are never resent automatically. Automatic retries cover text/extract/template only; forward/copy require manual handling. The single-attempt SDK guard is provided by Dashboard HeadlessClient; exceptions from an unguarded native CLI client are conservatively uncertain. See [reliability notes](../../docs/P4-RELIABILITY.md).

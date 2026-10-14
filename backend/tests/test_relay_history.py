@@ -108,6 +108,7 @@ def test_exact_source_replay_does_not_duplicate(admin, account, monkeypatch, tmp
 
         async def send_message(self, destination, text):
             calls.append((destination, text))
+            return SimpleNamespace(id=99)
 
         def _match_message_trigger(self, trigger, msg):
             return msg.chat.id in trigger.params.chat_ids

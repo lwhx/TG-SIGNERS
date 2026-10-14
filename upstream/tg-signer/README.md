@@ -491,3 +491,8 @@ tg-signer monitor run my_monitor
 迁移到 SQLite 后，新的签到记录只写入 `data.sqlite3`，但仍兼容读取旧
 `sign_record.json`。当运行任务时如果检测到旧 JSON，程序会输出提示并尝试将该任务
 的历史记录自动导入 SQLite。
+
+
+## Dashboard relay P4
+
+本仓库 Dashboard 扩展的 relay_message 已支持 P4 待核查状态与默认关闭的有界重试。超时、断网和中断不直接重发；forward/copy 仅人工重试，自动队列仅限文本/提取/模板。单次 SDK 重试限制由 Dashboard HeadlessClient 提供，原生 CLI 客户端的异常保守归为待核查。详见 [可靠性说明](../../docs/P4-RELIABILITY.md)。

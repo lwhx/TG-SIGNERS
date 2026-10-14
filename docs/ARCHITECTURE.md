@@ -62,3 +62,9 @@ Telegram 登录使用内存客户端，待登录流程十分钟失效、内存�
 容器中的 `127.0.0.1` 指容器自身。使用宿主机代理时须填容器可达的宿主机网关地址，或显式配置 host-gateway；本项目不会读取或改动宿主机现有代理。
 
 实时日志优先连接 `/ws/logs`。网络或反向代理无法建立 WebSocket 时，浏览器自动使用 `EventSource` 连接 `/api/logs/stream`；后端同样校验 JWT，发送 history/log 事件和心跳。WS 恢复后关闭 SSE，避免重复日志。
+
+## P4 转发可靠性
+
+转发状态分为 sending、sent、failed、uncertain。90 秒发送预算小于最短 120 秒持久租约；进程内活跃标记跨 Ledger 实例共享，防止租约过期时人工解锁。启动时残留 sending 转 uncertain；同一次发送的迟到成功可修正未送达确认。Dashboard 单次转发上下文禁用 SDK 内部重试并跟踪发送 RPC 接受状态。
+
+SQLite 原子领取令牌保护自动队列、人工重试和监听之间的互斥；队列默认关闭，每轮最多 5 条，每次核验消耗持久配额。只有 text/extract/template 的明确临时拒绝允许自动重试；来源摘要和配置摘要不符时停止，已验证的文本快照经统一限速包装器发送。详情见 [P4 说明](P4-RELIABILITY.md)。生产继续要求单 worker、单副本。

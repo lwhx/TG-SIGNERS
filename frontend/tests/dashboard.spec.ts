@@ -286,6 +286,10 @@ test("task action form submits complete config and editing retains fields (mock 
   await expect(
     monthDates.getByText("当月没有的日期会跳过，其余所选日期照常执行。"),
   ).toBeVisible();
+  // Let the earlier validation toast expire so this assertion observes a new result.
+  await expect(page.getByText("配置校验通过", { exact: true })).toHaveCount(0, {
+    timeout: 10000,
+  });
   await dialog.getByRole("button", { name: "校验配置", exact: true }).click();
   await expect(page.getByText("配置校验通过", { exact: true })).toBeVisible();
   await dialog.getByRole("button", { name: "保存任务", exact: true }).click();

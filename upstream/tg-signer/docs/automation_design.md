@@ -267,3 +267,8 @@ python -m pytest -vv tests/test_automation_state.py tests/test_automation_handle
 # Dashboard P3 relay maintenance
 
 The embedded RelayLedger supports opt-in bounded terminal history cleanup. Successful dedup keys and history deletion share one transaction; sending rows are excluded. Failure sequence and alert cursor/cooldown state are persisted in the same SQLite database. Dashboard performs notification delivery outside message workers. See [P3 operations](../../../docs/P3-OPERATIONS.md).
+
+
+## Dashboard relay P4
+
+relay_message 扩展以 RelayLedger + RelayRecoveryMixin 管理 SQLite 原子保留、租约、uncertain 核查、人工审计和持久重试队列。活跃发送不可人工解锁，迟到成功证据优先；HeadlessClient 在 ContextVar 转发上下文中限一次 RPC 并追踪 accepted 标记。自动队列只发送经过来源/配置摘要核验的 text/extract/template 快照，forward/copy 不自动入队。copy 使用核验过的 Message.copy 快照。清理保留未分类旧失败，并为已删除的其他失败留拦截指纹。详见 [P4](../../../docs/P4-RELIABILITY.md)。

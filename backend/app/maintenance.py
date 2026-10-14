@@ -127,7 +127,7 @@ async def check_relay_alerts():
         )
         if not claim:
             return
-        lines = [f"新增及积压的转发失败共 {claim['total']} 条："]
+        lines = [f"新增及积压的转发异常共 {claim['total']} 条（含失败和待核查）："]
         for group in claim["groups"]:
             lines.append(
                 f"账号 #{group['account_id'] or '未知'} / 任务 #{group['task_id'] or '未知'}："
