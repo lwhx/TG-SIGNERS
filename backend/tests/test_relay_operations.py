@@ -2,9 +2,10 @@
 import csv
 import io
 
-from backend.app import relay_history, relay_operations
-from backend.app.db import Account, Session, Task
 from tg_signer.automation.relay_ledger import RelayLedger
+
+from backend.app import relay_operations
+from backend.app.db import Session, Task
 
 
 def test_operations_and_export_require_admin(client):
