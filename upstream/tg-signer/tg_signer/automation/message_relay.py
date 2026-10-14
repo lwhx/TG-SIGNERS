@@ -6,8 +6,10 @@ destinations, content extraction, templates, and deduplication policies.
 
 from __future__ import annotations
 
-import re
 from functools import lru_cache
+from itertools import islice
+
+import regex
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -49,11 +51,12 @@ def _content_for_target(
     if pattern is not None:
         if not isinstance(pattern, str) or not pattern:
             raise ValueError("pattern must be a nonempty string")
-        flags = re.IGNORECASE if target.get("ignore_case", True) else 0
+        flags = regex.IGNORECASE if target.get("ignore_case", True) else 0
         if mode == "extract" and target.get("all_matches", False):
-            matches = list(re.finditer(pattern, text, flags=flags))[:20]
+            # Bound both regex CPU time and the number of extracted matches.
+            matches = list(islice(regex.finditer(pattern, text, flags=flags, timeout=0.2), 20))
         else:
-            match = re.search(pattern, text, flags=flags)
+            match = regex.search(pattern, text, flags=flags, timeout=0.2)
             matches = [match] if match else []
         if not matches:
             return []
@@ -95,7 +98,18 @@ def _fingerprint(
 ) -> str:
     source = f"{event.chat_id}:{getattr(message, 'id', None)}"
     value = text or _message_text(message)
-    if policy == "content" and value:
+    # Caption-only fingerprints cannot identify images or files. For media
+    # forward/copy use the source message identity even with content dedup.
+    has_media = bool(
+        getattr(message, "media", None)
+        or any(
+            getattr(message, key, None)
+            for key in ("photo", "video", "document", "audio", "voice", "animation", "sticker")
+        )
+    )
+    if policy == "content" and value and not (
+        mode in {"forward", "copy"} and has_media
+    ):
         identity = f"{mode}:content:{value}"
     else:
         # Message dedup is per rule; media without text uses message identity.
@@ -147,7 +161,7 @@ async def relay_message(
             texts = _content_for_target(normalized, event.message, event, ctx)
             retry_after = max(0, int(target.get("retry_after_seconds", 600)))
             lease = max(30, int(target.get("lease_seconds", 300)))
-        except (TypeError, ValueError, KeyError, IndexError, re.error) as exc:
+        except (TypeError, ValueError, KeyError, IndexError, regex.error, TimeoutError) as exc:
             ctx.log(
                 f"relay_message: invalid rule ({type(exc).__name__})",
                 level="ERROR",
