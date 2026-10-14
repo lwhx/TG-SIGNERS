@@ -56,8 +56,22 @@ class BotResultMixin:
         timeout_minutes: int,
     ) -> bool:
         """Register only already-confirmed Telegram deliveries; duplicate-safe."""
-        if not 1 <= timeout_minutes <= 10080:
-            raise ValueError("invalid bot result timeout")
+        if (
+            type(timeout_minutes) is not int
+            or not 1 <= timeout_minutes <= 10080
+            or not isinstance(success_pattern, str)
+            or not success_pattern
+            or not isinstance(failure_pattern, str)
+            or not failure_pattern
+            or len(success_pattern) > 500
+            or len(failure_pattern) > 500
+        ):
+            return False
+        try:
+            regex.compile(success_pattern)
+            regex.compile(failure_pattern)
+        except regex.error:
+            return False
         stamp = int(time.time())
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
