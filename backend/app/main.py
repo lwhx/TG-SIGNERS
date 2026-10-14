@@ -71,6 +71,7 @@ from .maintenance import router as maintenance_router
 from .notifications import notify
 from .relay import RelayPreviewInput, preview_match
 from .relay_history import router as relay_history_router
+from .relay_operations import router as relay_operations_router
 from .relay_retry import process_retries
 from .relay_retry import router as relay_retry_router
 from .schemas import (
@@ -1160,6 +1161,7 @@ def docs():
 
 
 api.include_router(relay_history_router)
+api.include_router(relay_operations_router)
 api.include_router(relay_retry_router)
 api.include_router(maintenance_router)
 app.include_router(api)
