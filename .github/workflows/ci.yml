@@ -59,7 +59,7 @@ jobs:
             fi
             sleep 1
           done
-          npx playwright test tests/relay-history.spec.ts tests/relay-recovery.spec.ts tests/operations.spec.ts tests/task-pagination.spec.ts tests/p6-management.spec.ts tests/p7-relay-expansion.spec.ts
+          npx playwright test tests/relay-history.spec.ts tests/relay-recovery.spec.ts tests/operations.spec.ts tests/task-pagination.spec.ts tests/p6-management.spec.ts tests/p7-relay-expansion.spec.ts tests/p8-maintenance.spec.ts
 
   compose:
     runs-on: ubuntu-latest
