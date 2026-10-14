@@ -9,6 +9,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     create_engine,
     event,
 )
@@ -60,12 +61,27 @@ class Task(Base):
     failure_pattern: Mapped[str] = mapped_column(String(1000), default="")
     response_timeout: Mapped[int] = mapped_column(Integer, default=20)
     folder: Mapped[str] = mapped_column(String(100), default="")
+    group_name: Mapped[str] = mapped_column(String(60), nullable=False, default="", server_default="")
     config: Mapped[dict] = mapped_column(JSON)  # complete upstream config, no lossy mapping
     next_run: Mapped[str | None] = mapped_column(String(40), nullable=True)
     last_run: Mapped[str | None] = mapped_column(String(40), nullable=True)
     last_status: Mapped[str] = mapped_column(String(30), default="pending")
     last_summary: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[str] = mapped_column(String(40), default=now)
+
+
+class TaskVersion(Base):
+    __tablename__ = "task_versions"
+    __table_args__ = (UniqueConstraint("task_id", "version", name="uq_task_versions_task_version"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    task_id: Mapped[int] = mapped_column(
+        ForeignKey("tasks.id", ondelete="CASCADE"), index=True
+    )
+    version: Mapped[int] = mapped_column(Integer)
+    operation: Mapped[str] = mapped_column(String(50), default="updated")
+    created_at: Mapped[str] = mapped_column(String(40), default=now)
+    snapshot: Mapped[dict] = mapped_column(JSON)
+    digest: Mapped[str] = mapped_column(String(64))
 
 
 class Run(Base):
@@ -103,6 +119,20 @@ def sqlite_pragmas(connection, _):
     connection.execute("PRAGMA foreign_keys=ON")
     connection.execute("PRAGMA journal_mode=WAL")
     connection.execute("PRAGMA busy_timeout=30000")
+
+
+def migrate_task_groups():
+    """Idempotent additive migration for databases created before P6.
+
+    An existing Telegram folder remains a separate configuration field.
+    This runs before any ORM query involving the new group_name column.
+    """
+    with engine.begin() as db:
+        columns = {row[1] for row in db.exec_driver_sql("PRAGMA table_info(tasks)")}
+        if "group_name" not in columns:
+            db.exec_driver_sql(
+                "ALTER TABLE tasks ADD COLUMN group_name VARCHAR(60) NOT NULL DEFAULT ''"
+            )
 
 
 Session = sessionmaker(engine, expire_on_commit=False)
