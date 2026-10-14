@@ -439,17 +439,26 @@ async def relay_message(
                 if target.get("track_bot_result") and account_id is not None:
                     bot_chat = getattr(getattr(messages[0], "chat", None), "id", None)
                     if isinstance(bot_chat, int):
-                        ledger.track_bot_send(
-                            destination=destination,
-                            fingerprint=fingerprint,
-                            account_id=account_id,
-                            task_id=task_id,
-                            bot_chat=bot_chat,
-                            sent_message=message_id,
-                            success_pattern=target.get("bot_success_pattern", ""),
-                            failure_pattern=target.get("bot_failure_pattern", ""),
-                            timeout_minutes=target.get("bot_timeout_minutes", 120),
-                        )
+                        # Receipt-tracking failure never converts an already
+                        # confirmed Telegram send into a failed delivery.
+                        try:
+                            ledger.track_bot_send(
+                                destination=destination,
+                                fingerprint=fingerprint,
+                                account_id=account_id,
+                                task_id=task_id,
+                                bot_chat=bot_chat,
+                                sent_message=message_id,
+                                success_pattern=target.get("bot_success_pattern", ""),
+                                failure_pattern=target.get("bot_failure_pattern", ""),
+                                timeout_minutes=target.get("bot_timeout_minutes", 120),
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            ctx.log(
+                                f"relay_message: Bot receipt tracking unavailable "
+                                f"({type(exc).__name__})",
+                                level="WARNING",
+                            )
                 ctx.log(
                     f"relay_message: delivered to {destination} via {mode}",
                     level="INFO",
