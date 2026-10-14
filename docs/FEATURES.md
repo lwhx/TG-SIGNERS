@@ -25,6 +25,10 @@
 | automation init/list/validate/run/export/import/reconfig | 自动化规则 | 模板、完整 JSON 编辑、JSON Schema、启停、导入导出 |
 | message / timer / startup | 自动化规则完整配置 | 原生复用上游触发器，含编辑消息 |
 | 全部内置 handlers | 自动化配置 | send_text、reply_text、extract_regex、random_pick、delay、schedule_next、ai_reply、blacklist_filter、forward、external_forward、server_chan、store_state、load_state |
+| 通用多来源 → 多目标转发 | 自动化与转发 → 新建自动化 → 通用消息转发模板 | `relay_message` 目标模式 forward/copy/text/extract/template，每个目标独立配置 |
+| 正则测试与捕获组 | 自动化与转发 → 消息筛选 → 测试消息匹配 | 管理员鉴权后的 `/api/relay/preview`，超时限制，显示命中与捕获组 |
+| 持久化去重与失败冷却 | `data/upstream/message_relay.sqlite3` | message/content/off；失败后冷却，收到重复消息时允许再试 |
+| 115 Bot 转存示例 | 自动化与转发 → 115 链接转存 Bot 示例 | 匹配 115cdn.com 分享链接，提取后发送至现有 Bot |
 | 自定义 Python handler | 工具箱 → Python 插件 | 文件列表、代码编辑、语法校验、保存、删除；任务重启重新加载 |
 | automation 状态持久化 | data/upstream/automations/<id>/state.json | 原生 RuleStateStore，重启恢复 |
 | monitor 全部 MatchConfig 字段 | 自动化规则 → 新建消息监控 → JSON 编辑 | 关键词/正则、发送者过滤、模板、AI、转发、Server酱、删除 |
@@ -40,4 +44,4 @@
 
 网页中的任务主数据来自 dashboard SQLite，不会自动接管目录中未导入的旧任务。迁移配置时从旧 CLI 导出 JSON/YAML，在网页新建相应任务并上传。将旧签到记录放入 `data/upstream/signs/`，再使用记录迁移功能。CLI 导出的原生配置不包含面板专有的成功/失败正则、随机延迟下限或账号关联；这些保存在面板数据库并随数据目录备份。
 
-上游对 Python API 的兼容性依赖固定的 vendored commit。升级上游时应重跑上游和本项目测试，不直接替换运行容器中的 Python 包。
+内置执行器基于固定版本且已加入自定义 relay_message 扩展。升级上游时应重跑上游、Dashboard 和通用转发回归测试，不直接替换运行容器中的 Python 包。
