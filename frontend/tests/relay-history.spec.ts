@@ -114,7 +114,7 @@ test("relay dashboard shows records, filters statuses and safely confirms retrie
   await page.locator("nav").getByRole("button", { name: "转发记录" }).click();
   await expect(page.getByRole("heading", { name: "转发历史" })).toBeVisible();
   await expect(page.getByText("最近 7 天投递结果")).toBeVisible();
-  await expect(page.getByText("每日转发")).toBeVisible();
+  await expect(page.locator("tbody").getByText("每日转发", { exact: true })).toHaveCount(2);
   await expect(page.getByText("FloodWait")).toBeVisible();
   await expect(page.locator("tbody tr")).toHaveCount(3);
 
