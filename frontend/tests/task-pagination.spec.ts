@@ -53,7 +53,7 @@ async function openTasks(page: Page, count: number) {
     );
   });
   await page.goto("/");
-  if (await page.getByRole("button", { name: "打开导航" }).isVisible())
+  if ((page.viewportSize()?.width || 1440) < 1024)
     await page.getByRole("button", { name: "打开导航" }).click();
   await page
     .locator("nav")
@@ -73,7 +73,7 @@ test("12 tasks fit on one page with explicit totals and page size controls", asy
   await expect(
     page.getByRole("button", { name: "分页任务 012", exact: true }),
   ).toBeVisible();
-  await expect(page.getByRole("status")).toHaveText(
+  await expect(page.getByRole("status").filter({ hasText: "共" })).toHaveText(
     "共 12 条 · 显示 1–12 条 · 第 1 / 1 页",
   );
   const pagination = page.getByRole("navigation", { name: "表格分页" });
@@ -94,7 +94,7 @@ test("pagination survives repeated polling, manual refresh and unrelated rerende
   await page.clock.install();
   const state = await openTasks(page, 45);
   await page.getByRole("button", { name: "下一页", exact: true }).click();
-  const summary = page.getByRole("status");
+  const summary = page.getByRole("status").filter({ hasText: "共" });
   await expect(summary).toHaveText("共 45 条 · 显示 21–40 条 · 第 2 / 3 页");
   for (const lastStatus of ["success", "failed"]) {
     state.tasks[20].last_status = lastStatus;
@@ -118,7 +118,7 @@ test("numbered pages, page sizes, searching, sorting and task category changes s
   page,
 }) => {
   await openTasks(page, 245);
-  const summary = page.getByRole("status");
+  const summary = page.getByRole("status").filter({ hasText: "共" });
   const pagination = page.getByRole("navigation", { name: "表格分页" });
   await pagination
     .getByRole("button", { name: "第 13 页", exact: true })
@@ -159,7 +159,7 @@ test("numbered pages, page sizes, searching, sorting and task category changes s
     .click();
   await page
     .locator("nav")
-    .getByRole("button", { name: "自动化规则", exact: true })
+    .getByRole("button", { name: "自动化与转发", exact: true })
     .click();
   await expect(summary).toHaveText("共 0 条 · 显示 0–0 条 · 第 1 / 1 页");
   await page
@@ -194,7 +194,7 @@ test("search matches task names, Bot usernames, saved target names and numeric C
     await expect(
       page.getByRole("button", { name: "分页任务 041", exact: true }),
     ).toBeVisible();
-    await expect(page.getByRole("status")).toHaveText(
+    await expect(page.getByRole("status").filter({ hasText: "共" })).toHaveText(
       "共 1 条 · 显示 1–1 条 · 第 1 / 1 页",
     );
   }
@@ -204,7 +204,7 @@ test("search matches task names, Bot usernames, saved target names and numeric C
     page.getByRole("button", { name: "分页任务 042", exact: true }),
   ).toBeVisible();
   await search.fill("   ");
-  await expect(page.getByRole("status")).toHaveText(
+  await expect(page.getByRole("status").filter({ hasText: "共" })).toHaveText(
     "共 45 条 · 显示 1–20 条 · 第 1 / 3 页",
   );
 });
@@ -218,7 +218,7 @@ test("deleting the only task on the last page returns to the nearest remaining p
   await page.getByRole("button", { name: "更多任务操作" }).click();
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "删除任务", exact: true }).click();
-  await expect(page.getByRole("status")).toHaveText(
+  await expect(page.getByRole("status").filter({ hasText: "共" })).toHaveText(
     "共 40 条 · 显示 21–40 条 · 第 2 / 2 页",
   );
   await expect(page.locator("tbody tr")).toHaveCount(20);
@@ -226,7 +226,7 @@ test("deleting the only task on the last page returns to the nearest remaining p
   await page.keyboard.press("Escape");
   state.tasks = [];
   await page.getByRole("button", { name: "刷新页面数据" }).click();
-  await expect(page.getByRole("status")).toHaveText(
+  await expect(page.getByRole("status").filter({ hasText: "共" })).toHaveText(
     "共 0 条 · 显示 0–0 条 · 第 1 / 1 页",
   );
   await expect(
@@ -246,7 +246,9 @@ test("pagination remains usable inside a mobile viewport with many pages", async
   await pagination
     .getByRole("button", { name: "第 13 页", exact: true })
     .click();
-  await expect(page.getByRole("status")).toContainText("第 13 / 13 页");
+  await expect(
+    page.getByRole("status").filter({ hasText: "共" }),
+  ).toContainText("第 13 / 13 页");
   for (const control of await pagination.getByRole("button").all()) {
     const bounds = await control.boundingBox();
     expect(bounds!.x).toBeGreaterThanOrEqual(0);

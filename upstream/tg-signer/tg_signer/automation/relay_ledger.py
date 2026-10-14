@@ -28,6 +28,7 @@ class RelayLedger:
         "part_index": "INTEGER",
         "dedup": "TEXT",
         "payload_digest": "TEXT",
+        "failure_seq": "INTEGER NOT NULL DEFAULT 0",
     }
     _STATUSES = frozenset({"sent", "failed", "sending"})
 
@@ -72,6 +73,30 @@ class RelayLedger:
                 "CREATE INDEX IF NOT EXISTS idx_relay_account_updated "
                 "ON relay_deliveries (account_id, updated_at DESC)"
             )
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_relay_updated "
+                "ON relay_deliveries (updated_at)"
+            )
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_relay_failure_seq "
+                "ON relay_deliveries (failure_seq) WHERE status='failed'"
+            )
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS relay_dedup ("
+                "destination TEXT NOT NULL, fingerprint TEXT NOT NULL, "
+                "PRIMARY KEY(destination, fingerprint)) WITHOUT ROWID"
+            )
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS relay_alert_state ("
+                "id INTEGER PRIMARY KEY CHECK(id=1), sequence INTEGER NOT NULL DEFAULT 0, "
+                "ack_sequence INTEGER NOT NULL DEFAULT 0, next_allowed INTEGER NOT NULL DEFAULT 0, "
+                "first_since INTEGER, "
+                "last_status TEXT NOT NULL DEFAULT 'idle')"
+            )
+            db.execute("INSERT OR IGNORE INTO relay_alert_state(id) VALUES(1)")
+        # Read-only history requests must not request a write lock for WAL setup.
+        with self._connect() as db:
+            db.execute("PRAGMA journal_mode=WAL")
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -135,6 +160,11 @@ class RelayLedger:
         stamp = int(time.time())
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            if db.execute(
+                "SELECT 1 FROM relay_dedup WHERE destination=? AND fingerprint=?",
+                (destination, fingerprint),
+            ).fetchone():
+                return "duplicate", None
             row = db.execute(
                 "SELECT status, attempts, updated_at FROM relay_deliveries "
                 "WHERE destination=? AND fingerprint=?",
@@ -150,8 +180,10 @@ class RelayLedger:
                     return "duplicate", None
                 if state == "sending" and stamp - updated < lease_seconds:
                     return "inflight", None
-                if state == "failed" and not force_failed and (
-                    stamp - updated < retry_after_seconds
+                if (
+                    state == "failed"
+                    and not force_failed
+                    and (stamp - updated < retry_after_seconds)
                 ):
                     return "cooldown", None
                 if force_failed and state != "failed":
@@ -174,10 +206,22 @@ class RelayLedger:
                     "rule_id,handler_index,target_index,part_index,dedup,payload_digest) "
                     "VALUES (?,?,?,?,?,'sending',?,?,?,?,?,?,?,?,?,?,?)",
                     (
-                        destination, fingerprint, action, source_chat,
-                        source_message, next_attempt, stamp, stamp, account_id,
-                        task_id, rule_id, handler_index, target_index, part_index,
-                        dedup, payload_digest,
+                        destination,
+                        fingerprint,
+                        action,
+                        source_chat,
+                        source_message,
+                        next_attempt,
+                        stamp,
+                        stamp,
+                        account_id,
+                        task_id,
+                        rule_id,
+                        handler_index,
+                        target_index,
+                        part_index,
+                        dedup,
+                        payload_digest,
                     ),
                 )
         return "reserved", next_attempt
@@ -191,21 +235,132 @@ class RelayLedger:
         error_type: str | None = None,
     ) -> None:
         with self._connect() as db:
-            db.execute(
+            db.execute("BEGIN IMMEDIATE")
+            result = db.execute(
                 "UPDATE relay_deliveries SET status=?, updated_at=?, "
                 "last_error=? WHERE destination=? AND fingerprint=? "
                 "AND status='sending' AND attempts=?",
                 (
-                    "sent" if succeeded else "failed", int(time.time()),
-                    error_type, destination, fingerprint, attempt,
+                    "sent" if succeeded else "failed",
+                    int(time.time()),
+                    error_type,
+                    destination,
+                    fingerprint,
+                    attempt,
                 ),
+            )
+            if result.rowcount and not succeeded:
+                db.execute(
+                    "UPDATE relay_alert_state SET sequence=sequence+1 WHERE id=1"
+                )
+                db.execute(
+                    "UPDATE relay_deliveries SET failure_seq="
+                    "(SELECT sequence FROM relay_alert_state WHERE id=1) "
+                    "WHERE destination=? AND fingerprint=?",
+                    (destination, fingerprint),
+                )
+
+    def cleanup(
+        self,
+        *,
+        sent_before: int,
+        failed_before: int,
+        limit: int = 500,
+        dry_run: bool = False,
+    ) -> int:
+        """Remove bounded terminal history, retaining successful dedup keys forever.
+
+        An in-flight delivery is never eligible, including an expired lease.
+        Selection, tombstones and deletion share the writer transaction.
+        """
+        if not 1 <= limit <= 5000:
+            raise ValueError("invalid cleanup batch size")
+        predicate = (
+            "(status='sent' AND updated_at < ?) OR (status='failed' AND updated_at < ?)"
+        )
+        with self._connect() as db:
+            if dry_run:
+                return db.execute(
+                    "SELECT COUNT(*) FROM relay_deliveries WHERE " + predicate,
+                    (sent_before, failed_before),
+                ).fetchone()[0]
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute(
+                "SELECT rowid, destination, fingerprint, status, dedup FROM relay_deliveries "
+                "WHERE " + predicate + " ORDER BY updated_at LIMIT ?",
+                (sent_before, failed_before, limit),
+            ).fetchall()
+            db.executemany(
+                "INSERT OR IGNORE INTO relay_dedup(destination, fingerprint) VALUES(?,?)",
+                [
+                    (r["destination"], r["fingerprint"])
+                    for r in rows
+                    if r["status"] == "sent" and r["dedup"] != "off"
+                ],
+            )
+            db.executemany(
+                "DELETE FROM relay_deliveries WHERE rowid=?",
+                [(r["rowid"],) for r in rows],
+            )
+            return len(rows)
+
+    def claim_alert(
+        self, *, since: int, cooldown: int, stamp: int | None = None
+    ) -> dict | None:
+        """Persistently lease one summary of new failures; no payloads or destinations."""
+        stamp = int(time.time()) if stamp is None else stamp
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            state = db.execute("SELECT * FROM relay_alert_state WHERE id=1").fetchone()
+            if stamp < state["next_allowed"]:
+                return None
+            # Initial activation has a bounded lookback. Thereafter the durable
+            # cursor includes failures accumulated during cooldown or downtime.
+            since = state["first_since"] if state["first_since"] is not None else since
+            summary = db.execute(
+                "SELECT COUNT(*) AS total, MAX(failure_seq) AS seq FROM relay_deliveries "
+                "WHERE status='failed' AND updated_at>=? AND failure_seq>?",
+                (since, state["ack_sequence"]),
+            ).fetchone()
+            if not summary["total"]:
+                return None
+            groups = db.execute(
+                "SELECT account_id,task_id,last_error,COUNT(*) AS total,MAX(failure_seq) AS seq "
+                "FROM relay_deliveries WHERE status='failed' AND updated_at>=? AND failure_seq>? "
+                "GROUP BY account_id,task_id,last_error ORDER BY seq DESC LIMIT 10",
+                (since, state["ack_sequence"]),
+            ).fetchall()
+            db.execute(
+                "UPDATE relay_alert_state SET next_allowed=?, first_since=COALESCE(first_since,?), "
+                "last_status='sending' WHERE id=1",
+                (stamp + cooldown, since),
+            )
+        return {
+            "sequence": summary["seq"],
+            "total": summary["total"],
+            "groups": [dict(r) for r in groups],
+        }
+
+    def complete_alert(self, sequence: int, success: bool) -> None:
+        with self._connect() as db:
+            db.execute(
+                "UPDATE relay_alert_state SET ack_sequence=MAX(ack_sequence,?), "
+                "last_status=? WHERE id=1",
+                (sequence if success else 0, "sent" if success else "failed"),
+            )
+
+    def alert_status(self) -> dict:
+        with self._connect() as db:
+            return dict(
+                db.execute(
+                    "SELECT next_allowed,last_status FROM relay_alert_state WHERE id=1"
+                ).fetchone()
             )
 
     def get(self, destination: str, fingerprint: str) -> dict | None:
         with self._connect() as db:
             row = db.execute(
-                "SELECT * FROM relay_deliveries "
-                "WHERE destination=? AND fingerprint=?",
+                "SELECT * FROM relay_deliveries WHERE destination=? AND fingerprint=?",
                 (destination, fingerprint),
             ).fetchone()
         return self._as_item(row) if row else None
@@ -239,7 +394,8 @@ class RelayLedger:
                 "SELECT COUNT(*) FROM relay_deliveries" + sql_where, params
             ).fetchone()[0]
             rows = db.execute(
-                "SELECT * FROM relay_deliveries" + sql_where
+                "SELECT * FROM relay_deliveries"
+                + sql_where
                 + " ORDER BY updated_at DESC, rowid DESC LIMIT ? OFFSET ?",
                 [*params, page_size, (page - 1) * page_size],
             ).fetchall()
@@ -250,8 +406,9 @@ class RelayLedger:
             "total": total,
         }
 
-    def stats(self, *, account_id: int | None = None,
-              task_id: int | None = None) -> dict:
+    def stats(
+        self, *, account_id: int | None = None, task_id: int | None = None
+    ) -> dict:
         where, params = [], []
         if account_id is not None:
             where.append("account_id = ?")
@@ -264,11 +421,11 @@ class RelayLedger:
         with self._connect() as db:
             rows = db.execute(
                 "SELECT status, COUNT(*) AS total FROM relay_deliveries"
-                + suffix + " GROUP BY status", params,
+                + suffix
+                + " GROUP BY status",
+                params,
             ).fetchall()
-            recent_where = (" WHERE " + " AND ".join(
-                [*where, "updated_at >= ?"]
-            ))
+            recent_where = " WHERE " + " AND ".join([*where, "updated_at >= ?"])
             last_day = db.execute(
                 "SELECT COUNT(*) FROM relay_deliveries" + recent_where,
                 [*params, cutoff],
@@ -285,14 +442,15 @@ class RelayLedger:
         counts.update({row["status"]: row["total"] for row in rows})
         series = {}
         for row in days:
-            series.setdefault(
-                row["day"], {"sent": 0, "failed": 0, "sending": 0}
-            )[row["status"]] = row["total"]
+            series.setdefault(row["day"], {"sent": 0, "failed": 0, "sending": 0})[
+                row["status"]
+            ] = row["total"]
         today = datetime.now(timezone.utc).date()
         chart = [
-            {"date": date.isoformat(), **series.get(
-                date.isoformat(), {"sent": 0, "failed": 0, "sending": 0}
-            )}
+            {
+                "date": date.isoformat(),
+                **series.get(date.isoformat(), {"sent": 0, "failed": 0, "sending": 0}),
+            }
             for date in (today - timedelta(days=offset) for offset in range(6, -1, -1))
         ]
         return {
@@ -301,7 +459,8 @@ class RelayLedger:
             **counts,
             "success_rate": (
                 round(counts["sent"] / (counts["sent"] + counts["failed"]) * 100, 1)
-                if counts["sent"] + counts["failed"] else None
+                if counts["sent"] + counts["failed"]
+                else None
             ),
             "days": chart,
         }

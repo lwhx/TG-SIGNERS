@@ -56,6 +56,7 @@ import { Account, api, post, Run, Task } from "@/lib/api";
 import { Page, useUI } from "@/lib/store";
 import { cn, date } from "@/lib/utils";
 import { describeSchedule } from "@/lib/schedule";
+import { pollVisible } from "@/lib/polling";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -105,6 +106,8 @@ export default function Home() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [overview, setOverview] = useState<any>(null);
   const [error, setError] = useState("");
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [syncing, setSyncing] = useState(false);
   const [sidebar, setSidebar] = useState(false);
   const [editor, setEditor] = useState<{
     kind: Task["kind"];
@@ -139,31 +142,28 @@ export default function Home() {
   }, []);
   useEffect(() => {
     if (!authenticated) return;
-    let alive = true;
-    const load = async () => {
+    return pollVisible(async (signal) => {
+      setSyncing(true);
       try {
         const [a, t, o] = await Promise.all([
-          api<Account[]>("/accounts"),
-          api<Task[]>("/tasks"),
-          api("/overview"),
+          api<Account[]>("/accounts", { signal }),
+          api<Task[]>("/tasks", { signal }),
+          page === "overview" ? api("/overview", { signal }) : Promise.resolve(null),
         ]);
-        if (alive) {
+        if (!signal.aborted) {
           setAccounts(a);
           setTasks(t);
-          setOverview(o);
+          if (o) setOverview(o);
+          setLastUpdated(new Date());
           setError("");
         }
       } catch (e) {
-        if (alive) setError((e as Error).message);
+        if (!signal.aborted) setError((e as Error).message);
+      } finally {
+        if (!signal.aborted) setSyncing(false);
       }
-    };
-    void load();
-    const timer = setInterval(load, 15000);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, [authenticated, revision]);
+    }, 15000);
+  }, [authenticated, revision, page]);
   useEffect(() => setSearch(""), [page]);
   const newTask = (kind: Task["kind"] = "signer") => {
     if (!accounts.length) {
@@ -610,6 +610,9 @@ export default function Home() {
                 ) : null}
               </div>
             </div>
+            <p role="status" className="mb-4 text-xs text-muted">
+              {syncing ? "正在同步…" : lastUpdated ? `最近同步：${lastUpdated.toLocaleTimeString("zh-CN", { hour12: false })} · 后台标签页暂停刷新` : "等待同步…"}
+            </p>
             {error && (
               <div
                 role="alert"

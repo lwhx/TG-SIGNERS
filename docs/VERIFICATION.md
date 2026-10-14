@@ -54,3 +54,11 @@
 此次通过 TypeScript、Next.js 生产构建，以及新镜像独立临时容器内的全部 12 项 Playwright 测试。新增 6 项回归覆盖 12 条任务完整展示、连续两轮自动刷新和手动刷新保留页码、20 / 50 / 100 条切换、数字跳页、搜索 / 排序 / 分类切换、Bot / 多目标 / Chat ID 搜索、删除末页任务 / 清空列表，以及 390px 手机分页布局。测试容器以非 root、只读根文件系统和临时数据目录运行，健康检查通过；测试未修改现有部署数据。
 
 本次镜像标签为 `tg-signer-dashboard:20260923-pagination-search`，同时更新 `tg-signer-dashboard:local`，Linux amd64 镜像导出至 `release/tg-signer-dashboard.tar.gz`，校验文件为 `release/SHA256SUMS`。本次交付为 Docker 镜像包，现有运行实例未部署更新。
+# P3 验证（2026-10-14）
+
+- 在隔离临时数据目录运行 Dashboard 和嵌入执行器全量 Python 回归：**221 passed**；两条依赖库弃用提示，无失败。
+- 前端 TypeScript、生产静态构建通过；后端兼容 lint、修改过的上游模块 lint、`git diff --check` 通过。
+- 使用隔离 FastAPI 和 Chromium 运行全部 Playwright：**15 passed**。覆盖原 Dashboard 登录/导航、桌面/手机、WS/SSE、任务编辑/分页，以及 P3 手机维护、清理默认关闭/预览/确认、可见性轮询与 P2 转发人工重试。安装中文字体后复查手机维护页面，无横向溢出。
+- 新增用例先观察失败再修复：成功历史清理后仍去重；运行中保留；告警重启限频、通知渠道故障隔离、冷却积压不丢失、首次告警失败不扩大历史窗口；概览按统计时区聚合且不返回大回复字段。
+- 独立代码审核发现并修复告警冷却窗口遗漏、总超时导致重复通知，以及首次通知失败扩大历史范围三个边界，最终复核无新增发现。
+- 未操作生产 VPS；Telegram 与通知外部发送均用模拟替代。Docker/Compose 与 GHCR 的最终发布由 GitHub CI 执行；发布结果以 PR 和对应 Actions 记录为准。

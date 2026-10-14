@@ -29,7 +29,7 @@ from .telegram import AIMixin, telegram
 
 
 class AuditMixin:
-    async def audit(self, operation, label, text):
+    async def audit(self, operation, label, text, *, relay_rule=False):
         if not self.active:
             return
         with Session() as db:
@@ -80,7 +80,11 @@ class AuditMixin:
                 )
                 db.commit()
             bus.emit(summary, "ERROR" if status == "failed" else "INFO")
-            if status == "failed":
+            if status == "failed" and not (
+                relay_rule and captured and all(
+                    "relay_message: Telegram delivery failed (" in msg for msg in captured
+                )
+            ):
                 await notify("自动化规则失败", f"{task.name} · {label}: {summary}")
             execution_errors.reset(error_ctx)
             log_context.reset(ctx)
@@ -90,7 +94,10 @@ class Automation(AuditMixin, AIMixin, UserAutomation):
     async def _run_rule(self, rule, event):
         parent = super()._run_rule
         text = str((event.message.text or event.message.caption or "") if event.message else "")
-        await self.audit(lambda: parent(rule, event), rule.id, text)
+        await self.audit(
+            lambda: parent(rule, event), rule.id, text,
+            relay_rule=any(h.handler == "relay_message" for h in rule.handlers),
+        )
 
 
 class Monitor(AuditMixin, AIMixin, UserMonitor):

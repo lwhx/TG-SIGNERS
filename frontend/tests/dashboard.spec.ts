@@ -30,7 +30,7 @@ test("panel login, session cookie, navigation, websocket and desktop layout", as
   for (const name of [
     "Telegram 账号",
     "签到任务",
-    "自动化规则",
+    "自动化与转发",
     "日志与终端",
     "工具箱",
     "系统设置",

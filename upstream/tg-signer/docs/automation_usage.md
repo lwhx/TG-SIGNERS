@@ -250,3 +250,6 @@ HANDLERS = {"echo": echo}
 
 4. AI 相关 handler 报错？
 - 先配置 `OPENAI_API_KEY`（或运行 `tg-signer llm-config`）。
+# Dashboard relay retention and alerts
+
+Dashboard users can configure opt-in history retention and deduplicated relay alerts under system settings. Successful delivery deduplication survives cleanup; CLI configurations and check-in history are unaffected. See [P3 operations](../../../docs/P3-OPERATIONS.md).

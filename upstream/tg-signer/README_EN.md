@@ -2,6 +2,8 @@
 
 [简体中文](./README.md)
 
+This embedded fork includes Dashboard relay extensions: optional bounded history retention preserves successful deduplication keys, and failure sequence cursors support persistent alert throttling. See [P3 operations](../../docs/P3-OPERATIONS.md). Existing CLI check-in configuration and records are unchanged.
+
 ### Features
 
 - Daily scheduled check-ins with random time deviation
