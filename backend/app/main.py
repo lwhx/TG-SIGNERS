@@ -797,7 +797,7 @@ async def live_logs(ws: WebSocket):
         done, _ = await asyncio.wait(futures, return_when=asyncio.FIRST_COMPLETED)
         for future in done:
             future.result()
-    except (WebSocketDisconnect, RuntimeError, OSError):
+    except (WebSocketDisconnect, RuntimeError, OSError, asyncio.CancelledError):
         pass
     finally:
         for future in futures:
