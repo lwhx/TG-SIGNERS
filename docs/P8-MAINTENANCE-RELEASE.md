@@ -43,7 +43,7 @@ P8 Dashboard 版本 `1.2.0`，SQLite schema `3`。未明确验证新版本前不
 ## 5. ARM64 + GHCR
 
 - 发布流水线只有在 **main 的 push CI 全部通过** 后运行，运行 Buildx + QEMU，发布同一 `latest` 和 `sha-<12位提交>` 的多架构清单：`linux/amd64` / `linux/arm64`。
-- CI 独立 ARM64 job：用 QEMU 运行 ARM64 镜像内 Python，验证 native packages：`cryptography`、`pyrogram`、`tg_signer`、`fastapi`、`sqlalchemy`。原 AMD64 Docker Compose 冒烟测试继续。
+- CI 独立 ARM64 job：在 GitHub 原生 `ubuntu-24.04-arm` runner 上运行 ARM64 镜像内 Python，验证 native packages：`cryptography`、`pyrogram`、`tg_signer`、`fastapi`、`sqlalchemy`。原 AMD64 Docker Compose 冒烟测试继续。
 - 多架构镜像不改变 Compose 的 `image` 字段；Docker 根据服务器 CPU 自动拉取对应镜像。
 - GHCR 发布状态未成功前不可声称 ARM64 已可用。请以成功构建的 Buildx manifest 与运行日志为准。
 
@@ -65,4 +65,4 @@ docker compose logs --tail=120 dashboard
 
 ## 自动化与人工验收
 
-Ruff + pytest、原执行器全部回归、TypeScript/Next、Playwright 维护页面、AMD64 Docker 冒烟、ARM64 QEMU 二进制依赖测试、Compose 原数据挂载保持。备份加密、错误密码、包篡改、备份导入、暂存、冷启动恢复、中途中断回滚、API 鉴权及 schema 迁移均有独立测试。真实 ARM64 VPS 上的 Telegram 登录、Bot 回执和持续运行仍建议在用户的实际环境验证。
+Ruff + pytest、原执行器全部回归、TypeScript/Next、Playwright 维护页面、AMD64 Docker 冒烟、ARM64 原生 Runner 二进制依赖测试、Compose 原数据挂载保持。备份加密、错误密码、包篡改、备份导入、暂存、冷启动恢复、中途中断回滚、API 鉴权及 schema 迁移均有独立测试。真实 ARM64 VPS 上的 Telegram 登录、Bot 回执和持续运行仍建议在用户的实际环境验证。
