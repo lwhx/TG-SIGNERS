@@ -122,5 +122,5 @@ def test_relay_dashboard_task_schema_stays_compatible():
 def test_preview_requires_panel_login(client: TestClient):
     result = client.post("/api/relay/preview", json={
         "text_rule": "regex", "pattern": r"\\d+", "sample": "42"
-    })
+    }, headers={"Cookie": "tg_dashboard=invalid-token"})
     assert result.status_code == 401
