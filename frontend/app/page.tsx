@@ -76,11 +76,13 @@ import { TaskEditor } from "@/components/task-editor";
 import { Settings } from "@/components/settings";
 import { Tools } from "@/components/tools";
 import { Logs } from "@/components/logs";
+import { RelayHistory } from "@/components/relay-history";
 const navigation: [Page, string, any][] = [
   ["overview", "概览", LayoutDashboard],
   ["accounts", "Telegram 账号", Users],
   ["tasks", "签到任务", CheckCircle2],
   ["automation", "自动化与转发", Workflow],
+  ["relay", "转发记录", Activity],
   ["logs", "日志与终端", TerminalSquare],
   ["tools", "工具箱", Wrench],
   ["settings", "系统设置", Settings2],
@@ -90,6 +92,7 @@ const descriptions: Record<Page, string> = {
   accounts: "安全连接您的 Telegram 账号，统一管理每一个会话。",
   tasks: "配置签到动作与时间计划，让日常任务自动完成。",
   automation: "监听多个来源，对消息进行筛选、提取、去重并转发给频道、群组或 Bot。",
+  relay: "查看 Telegram 投递状态、失败原因和最近 7 天统计，并安全重试失败消息。",
   logs: "实时追踪任务执行过程，查看每一次 Telegram 回复。",
   tools: "发现对话、管理消息，以及使用 tg-signer 的进阶能力。",
   settings: "让网络、通知与安全配置适合您的工作方式。",
@@ -425,7 +428,7 @@ export default function Home() {
           <nav className="space-y-1 px-4">
             {navigation.map(([id, label, Icon], i) => (
               <div key={id}>
-                {i === 5 && (
+                {i === 6 && (
                   <div className="mx-3 my-5 border-t border-white/[.07]" />
                 )}
                 <button
@@ -858,6 +861,7 @@ export default function Home() {
                 />
               </section>
             )}
+            {page === "relay" && <RelayHistory accounts={accounts} tasks={tasks} />}
             {page === "logs" && <Logs accounts={accounts} tasks={tasks} />}{" "}
             {page === "tools" && <Tools accounts={accounts} />}{" "}
             {page === "settings" && <Settings />}
