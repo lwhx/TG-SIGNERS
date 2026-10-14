@@ -22,6 +22,7 @@ dependencies = [
     "pydantic",
     "openai",
     "croniter",
+    "regex>=2024.0.0", # bounded matching for message relays
     "json_repair",
     "typing-extensions",
     "httpx",

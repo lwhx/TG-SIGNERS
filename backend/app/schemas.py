@@ -13,6 +13,8 @@ from tg_signer.config import (
     SignConfigV3,
 )
 
+from .relay import validate_relay_config
+
 
 def validate_proxy(value):
     if value:
@@ -111,7 +113,10 @@ class TaskInput(BaseModel):
             raise ValueError("至少添加一条自动化规则")
         if self.kind == "monitor" and not cfg.match_cfgs:
             raise ValueError("至少添加一条监控规则")
-        self.config = cfg.model_dump(mode="json")
+        normalized = cfg.model_dump(mode="json")
+        if self.kind == "automation":
+            validate_relay_config(normalized)
+        self.config = normalized
         return self
 
 

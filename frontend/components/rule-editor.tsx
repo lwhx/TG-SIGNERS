@@ -3,6 +3,7 @@
 import { Plus, Trash2 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Field } from "./common";
+import { RelayTargetsEditor, RegexTestPanel, defaultRelayParams } from "./relay-targets";
 
 type RuleEditorProps = {
   kind: "automation" | "monitor";
@@ -11,6 +12,7 @@ type RuleEditorProps = {
 };
 
 const clone = <T,>(value: T): T => structuredClone(value);
+const parseChatId = (value: string) => /^-?\d+$/.test(value.trim()) ? Number(value.trim()) : value.trim();
 
 const toList = (value: string) => {
   const items = value
@@ -220,6 +222,7 @@ const handlerOptions = [
   ["delay", "延时"],
   ["extract_regex", "提取正则变量"],
   ["forward", "转发消息"],
+  ["relay_message", "通用多目标消息转发"],
   ["random_pick", "随机回复"],
   ["server_chan", "Server酱通知"],
   ["schedule_next", "安排下次执行"],
@@ -242,6 +245,8 @@ function paramsFor(handler: string) {
       return { pattern: "(\\d+)", var: "value" };
     case "forward":
       return { chat_id: "@TargetChat" };
+    case "relay_message":
+      return defaultRelayParams();
     case "random_pick":
       return { choices: ["选项一", "选项二"] };
     case "server_chan":
@@ -324,6 +329,8 @@ function HandlerParams({
           <ParamField label="保存到变量" value={params.var} onChange={(value) => set("var", value)} />
         </div>
       );
+    case "relay_message":
+      return <RelayTargetsEditor params={params} onChange={onChange} />;
     case "forward":
       return <ParamField label="转发到对话" value={params.chat_id} onChange={(value) => set("chat_id", value)} placeholder="@TargetChat 或数字 ID" />;
     case "random_pick":
@@ -409,7 +416,8 @@ function AutomationEditor({ config, onChange }: Omit<RuleEditorProps, "kind">) {
                         </select>
                         <Button variant="ghost" size="icon" aria-label="删除触发器" disabled={(rule.triggers || []).length < 2} onClick={() => updateNested(index, "triggers", rule.triggers.filter((_item: any, n: number) => n !== triggerIndex))}><Trash2 size={13} /></Button>
                       </div>
-                      {trigger.type === "message" && <div className="grid gap-3 sm:grid-cols-2"><ParamField label="来源对话（可选）" value={params.chat_id} onChange={(value) => setParams({ chat_id: value || undefined })} placeholder="@YourGroup" /><ParamField label="发送者（可选）" value={fromList(params.from_user_ids)} onChange={(value) => setParams({ from_user_ids: toList(value) })} placeholder="@admin, 123456" /><CheckField checked={params.reply_to_me} label="只处理回复我的消息" onChange={(value) => setParams({ reply_to_me: value })} /></div>}
+                      {trigger.type === "message" && <div className="grid gap-3 sm:grid-cols-2"><ParamField label="单个来源（可选）" value={params.chat_id} onChange={(value) => setParams({ chat_id: value ? parseChatId(value) : undefined, chat_ids: undefined })} placeholder="@YourGroup" />
+                        <ParamField label="多个来源（用逗号分隔）" value={fromList(params.chat_ids)} onChange={(value) => setParams({ chat_ids: (toList(value) || []).map(parseChatId), chat_id: undefined })} placeholder="@source_a, @source_b, -100123456789" /><ParamField label="发送者（可选）" value={fromList(params.from_user_ids)} onChange={(value) => setParams({ from_user_ids: (toList(value) || []).map(parseChatId) })} placeholder="@admin, 123456" /><CheckField checked={params.reply_to_me} label="只处理回复我的消息" onChange={(value) => setParams({ reply_to_me: value })} /></div>}
                       {trigger.type === "timer" && <div className="grid gap-3 sm:grid-cols-2"><ParamField label="间隔秒数" type="number" value={params.interval_seconds ?? 3600} onChange={(value) => setParams({ interval_seconds: value, cron: undefined })} /><ParamField label="指定对话（可选）" value={params.chat_id} onChange={(value) => setParams({ chat_id: value || undefined })} placeholder="@YourGroup" /><ParamField label="Cron（可选，与间隔二选一）" value={params.cron} onChange={(value) => setParams({ cron: value || undefined, interval_seconds: undefined })} placeholder="0 8 * * *" /></div>}
                       {trigger.type === "startup" && <ParamField label="指定对话（可选）" value={params.chat_id} onChange={(value) => setParams({ chat_id: value || undefined })} placeholder="留空表示启动后立即执行" />}
                     </div>
@@ -421,14 +429,19 @@ function AutomationEditor({ config, onChange }: Omit<RuleEditorProps, "kind">) {
             <div className="border-t border-line pt-4">
               <h4 className="mb-3 text-sm font-semibold">消息筛选（可选）</h4>
               <div className="grid gap-3 sm:grid-cols-2">
-                <ParamField label="来源对话" value={rule.filters?.chat_id} onChange={(value) => updateRule(index, { filters: { ...(rule.filters || {}), chat_id: value || undefined } })} placeholder="留空则使用触发器设置" />
-                <ParamField label="发送者" value={fromList(rule.filters?.from_user_ids)} onChange={(value) => updateRule(index, { filters: { ...(rule.filters || {}), from_user_ids: toList(value) } })} placeholder="@admin, 123456" />
+                <ParamField label="来源对话" value={rule.filters?.chat_id} onChange={(value) => updateRule(index, { filters: { ...(rule.filters || {}), chat_id: value ? parseChatId(value) : undefined } })} placeholder="留空则使用触发器设置" />
+                <ParamField label="发送者" value={fromList(rule.filters?.from_user_ids)} onChange={(value) => updateRule(index, { filters: { ...(rule.filters || {}), from_user_ids: (toList(value) || []).map(parseChatId) } })} placeholder="@admin, 123456" />
                 <Field label="文本匹配">
                   <select value={rule.filters?.text_rule || "all"} onChange={(event) => updateRule(index, { filters: { ...(rule.filters || {}), text_rule: event.target.value } })}><option value="all">所有文本</option><option value="contains">包含关键词</option><option value="exact">完全相同</option><option value="regex">正则表达式</option></select>
                 </Field>
                 <ParamField label="匹配内容" value={rule.filters?.text_value} onChange={(value) => updateRule(index, { filters: { ...(rule.filters || {}), text_value: value || undefined } })} placeholder="例如：签到" />
                 <CheckField checked={rule.filters?.ignore_case !== false} label="忽略大小写" onChange={(value) => updateRule(index, { filters: { ...(rule.filters || {}), ignore_case: value } })} />
               </div>
+              <RegexTestPanel
+                mode={rule.filters?.text_rule || "all"}
+                pattern={rule.filters?.text_value || ""}
+                ignoreCase={rule.filters?.ignore_case !== false}
+              />
             </div>
 
             <div className="border-t border-line pt-4">
