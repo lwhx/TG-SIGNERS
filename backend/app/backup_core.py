@@ -354,7 +354,8 @@ def queue_restore(data: Path, backup_id: str, secret: str) -> dict:
     if _pending_path(data).exists() or (data / ".restore-journal.json").exists():
         raise BackupError("已有等待执行或未清理的恢复任务")
     manifest, files = _decode(backup_path(data, backup_id).read_bytes(), secret)
-    stage = data / ".restore-stage" / backup_id
+    operation = uuid.uuid4().hex
+    stage = data / ".restore-stage" / operation
     if stage.exists():
         raise BackupError("恢复暂存目录已存在")
     stage.mkdir(parents=True, mode=0o700)
@@ -366,7 +367,7 @@ def queue_restore(data: Path, backup_id: str, secret: str) -> dict:
             stage / "manifest.json",
             json.dumps(manifest, sort_keys=True).encode("utf-8"),
         )
-        pending = {"id": backup_id, "created_at": _stamp()}
+        pending = {"id": backup_id, "operation": operation, "created_at": _stamp()}
         _atomic_bytes(
             _pending_path(data), json.dumps(pending).encode("utf-8")
         )
@@ -374,7 +375,7 @@ def queue_restore(data: Path, backup_id: str, secret: str) -> dict:
         shutil.rmtree(stage)
         raise
     return {
-        "pending": True, "id": backup_id, "files": len(files),
+        "pending": True, "id": backup_id, "operation": operation, "files": len(files),
         "message": "备份已校验并暂存；重启容器后在应用加载前执行恢复",
     }
 
@@ -423,7 +424,7 @@ def apply_pending_restore(data: Path) -> dict | None:
             _undo(data, journal)
             _atomic_bytes(
                 data / ".restore-last.json",
-                json.dumps({"id": journal["id"], "status": "rolled_back", "time": _stamp()}).encode(),
+                json.dumps({"id": journal.get("backup_id", journal["id"]), "status": "rolled_back", "time": _stamp()}).encode(),
             )
             pending_file.unlink(missing_ok=True)
             journal_file.unlink()
@@ -437,7 +438,8 @@ def apply_pending_restore(data: Path) -> dict | None:
         return None
     pending = json.loads(pending_file.read_text())
     backup_id = _valid_id(pending["id"])
-    stage = data / ".restore-stage" / backup_id
+    operation = _valid_id(pending.get("operation", backup_id))
+    stage = data / ".restore-stage" / operation
     manifest = json.loads((stage / "manifest.json").read_text())
     files = {
         name: (stage / "data" / name).read_bytes()
@@ -448,7 +450,7 @@ def apply_pending_restore(data: Path) -> dict | None:
         dbfile + ext for dbfile in files
         if Path(dbfile).suffix in SQLITE_SUFFIXES for ext in ("-wal", "-shm")
     })
-    previous = data / ".restore-previous" / backup_id
+    previous = data / ".restore-previous" / operation
     if previous.exists():
         raise BackupError("恢复回退快照已存在；请人工检查")
     previous.mkdir(parents=True, mode=0o700)
@@ -462,7 +464,7 @@ def apply_pending_restore(data: Path) -> dict | None:
             destination.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
             shutil.copy2(live, destination)
     journal = {
-        "id": backup_id, "state": "applying",
+        "id": operation, "backup_id": backup_id, "state": "applying",
         "replace": replace, "existing": existing,
     }
     _journal(data, journal)
@@ -481,6 +483,7 @@ def apply_pending_restore(data: Path) -> dict | None:
         _journal(data, {**journal, "state": "completed"})
         pending_file.unlink(missing_ok=True)
         journal_file.unlink(missing_ok=True)
+        shutil.rmtree(stage, ignore_errors=True)
         return {"status": "completed", "id": backup_id}
     except BaseException:
         _undo(data, journal)
@@ -490,4 +493,5 @@ def apply_pending_restore(data: Path) -> dict | None:
         )
         pending_file.unlink(missing_ok=True)
         journal_file.unlink(missing_ok=True)
+        shutil.rmtree(stage, ignore_errors=True)
         raise
