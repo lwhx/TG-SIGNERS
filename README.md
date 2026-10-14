@@ -2,7 +2,7 @@
 
 面向 Telegram 签到、自动化与消息监控的单容器 Web 控制台（当前版本：`1.1.0`）。
 
-源码仓库：<https://github.com/dongbo501/TG-SIGNER> · 上游执行器：<https://github.com/amchii/tg-signer>
+当前仓库：<https://github.com/lwhx/TG-SIGNERS> · Dashboard 原作者：<https://github.com/dongbo501/TG-SIGNER> · 上游执行器：<https://github.com/amchii/tg-signer>
 
 基于 [amchii/tg-signer](https://github.com/amchii/tg-signer) 的中文 Web 控制台。前后端、Telegram 协议库和 tg-signer **打包在一个 Docker 镜像、一个运行容器中**。无需另外部署 Node、Nginx、Redis 或数据库容器。
 
@@ -107,9 +107,11 @@ stateDiagram-v2
 
 Automation 复用上游触发器、过滤器、模板、handler、持久状态；Monitor 保留上游兼容行为。每次规则处理单独写入执行历史，监听任务可启停，服务重启会恢复启用的监听。
 
+> 当前仓库使用自己的 GHCR 镜像，源码更新后由 GitHub Actions 在 `main` CI 全部通过时自动发布。正式迁移前请先阅读 [自有 GHCR 发布与数据保护指南](docs/GHCR-DEPLOY.md)，备份原来的 `data/`，不要切换到尚未发布的镜像。
+ 
 ## 4. 单容器部署
 
-镜像发布在 `ghcr.io/dongbo501/tg-signer:latest`（Linux amd64）。在项目目录（或只放一份 `docker-compose.yml` 的目录）中执行：
+镜像发布在 `ghcr.io/lwhx/tg-signers:latest`（Linux amd64）。在项目目录（或只放一份 `docker-compose.yml` 的目录）中执行：
 
 ```bash
 docker compose pull
@@ -161,7 +163,7 @@ docker compose restart                   # 重启
 docker compose pull && docker compose up -d --wait   # 更新
 docker compose down                      # 删除唯一容器和项目网络，保留 data
 # 删除镜像（可选）
-docker image rm ghcr.io/dongbo501/tg-signer:latest
+docker image rm ghcr.io/lwhx/tg-signers:latest
 ```
 
 彻底删除账号和密钥时，在确认备份不再需要后再删除 `data/`。`docker compose down -v` 不会删除这里使用的宿主机绑定目录。
@@ -214,13 +216,13 @@ npm run test:e2e
 
 ## 镜像构建与发布
 
-镜像地址：`ghcr.io/dongbo501/tg-signer:latest`（Linux amd64）。部署方式见上文「单容器部署」，
+镜像地址：`ghcr.io/lwhx/tg-signers:latest`（Linux amd64）。部署方式见上文「单容器部署」，
 详细说明见 [release/INSTALL.txt](release/INSTALL.txt)。镜像不包含账号、任务数据或密钥。
 
 从源码重新构建并发布镜像：
 
 ```bash
 # 先完成本地测试，再构建
-docker build -t ghcr.io/dongbo501/tg-signer:latest .
-docker push ghcr.io/dongbo501/tg-signer:latest
+docker build -t ghcr.io/lwhx/tg-signers:latest .
+docker push ghcr.io/lwhx/tg-signers:latest
 ```
