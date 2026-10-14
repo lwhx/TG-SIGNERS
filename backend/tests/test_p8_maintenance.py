@@ -102,6 +102,13 @@ def test_import_verify_stage_and_cold_restore_with_rollback_snapshot(tmp_path, m
     assert restore_status(data)["last"]["status"] == "completed"
     assert restore_status(data)["pending"] is None
     assert apply_pending_restore(data) is None
+    from backend.app.backup_core import cancel_queued_restore
+
+    pending_again = queue_restore(data, imported["id"], PASSWORD)
+    assert pending_again["pending"] is True
+    assert cancel_queued_restore(data)["cancelled"] is True
+    assert restore_status(data)["pending"] is None
+    assert read_name(data) == "original"
     # Same encrypted backup can be restored again with a new operation id.
     again = queue_restore(data, imported["id"], PASSWORD)
     assert again["operation"] != queued["operation"]
