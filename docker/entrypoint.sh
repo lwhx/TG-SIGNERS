@@ -8,6 +8,10 @@ if [ "$(id -u)" = 0 ]; then
   chmod 700 "$data"
   export HOME=/home/dashboard
   exec setpriv --reuid=10001 --regid=10001 --clear-groups \
-    --inh-caps=-all -- "$@"
+    --inh-caps=-all -- "$0" "$@"
 fi
+
+# No credentials or live SQLite connections have been initialized yet.
+# Journaled restore is performed offline, before Uvicorn imports app.security.
+python -m app.restore_boot
 exec "$@"
