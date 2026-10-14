@@ -66,11 +66,12 @@ from .db import (
 )
 from .engine import task_engine
 from .events import LogBridge, bus
-from .maintenance import check_relay_alerts, scheduled_cleanup
+from .maintenance import check_relay_alerts, check_relay_recovery, scheduled_cleanup
 from .maintenance import router as maintenance_router
 from .notifications import notify
 from .relay import RelayPreviewInput, preview_match
 from .relay_history import router as relay_history_router
+from .relay_operations import router as relay_operations_router
 from .relay_retry import process_retries
 from .relay_retry import router as relay_retry_router
 from .schemas import (
@@ -130,6 +131,9 @@ async def lifespan(app):
     )
     task_engine.scheduler.add_job(
         process_retries, "interval", seconds=30, id="relay-retries", max_instances=1, coalesce=True
+    )
+    task_engine.scheduler.add_job(
+        check_relay_recovery, "interval", minutes=1, id="relay-recovery", max_instances=1, coalesce=True
     )
     bus.emit(f"控制台已启动 · tg-signer {upstream_version}")
     yield
@@ -1160,6 +1164,7 @@ def docs():
 
 
 api.include_router(relay_history_router)
+api.include_router(relay_operations_router)
 api.include_router(relay_retry_router)
 api.include_router(maintenance_router)
 app.include_router(api)

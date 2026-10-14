@@ -78,12 +78,14 @@ import { Settings } from "@/components/settings";
 import { Tools } from "@/components/tools";
 import { Logs } from "@/components/logs";
 import { RelayHistory } from "@/components/relay-history";
+import { FaultCenter } from "@/components/fault-center";
 const navigation: [Page, string, any][] = [
   ["overview", "概览", LayoutDashboard],
   ["accounts", "Telegram 账号", Users],
   ["tasks", "签到任务", CheckCircle2],
   ["automation", "自动化与转发", Workflow],
   ["relay", "转发记录", Activity],
+  ["faults", "故障中心", Activity],
   ["logs", "日志与终端", TerminalSquare],
   ["tools", "工具箱", Wrench],
   ["settings", "系统设置", Settings2],
@@ -94,6 +96,7 @@ const descriptions: Record<Page, string> = {
   tasks: "配置签到动作与时间计划，让日常任务自动完成。",
   automation: "监听多个来源，对消息进行筛选、提取、去重并转发给频道、群组或 Bot。",
   relay: "查看 Telegram 投递状态、失败原因和最近 7 天统计，并安全重试失败消息。",
+  faults: "集中查看异常、重试排期与监听状态，安全导出记录。",
   logs: "实时追踪任务执行过程，查看每一次 Telegram 回复。",
   tools: "发现对话、管理消息，以及使用 tg-signer 的进阶能力。",
   settings: "让网络、通知与安全配置适合您的工作方式。",
@@ -865,6 +868,7 @@ export default function Home() {
               </section>
             )}
             {page === "relay" && <RelayHistory accounts={accounts} tasks={tasks} />}
+            {page === "faults" && <FaultCenter accounts={accounts} tasks={tasks} onHistory={() => setPage("relay")} />}
             {page === "logs" && <Logs accounts={accounts} tasks={tasks} />}{" "}
             {page === "tools" && <Tools accounts={accounts} />}{" "}
             {page === "settings" && <Settings />}

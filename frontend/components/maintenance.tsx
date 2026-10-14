@@ -12,6 +12,7 @@ type Policy = {
   relay_sent_days: number;
   relay_failed_days: number;
   alert_enabled: boolean;
+  recovery_enabled: boolean;
   alert_window_minutes: number;
   alert_cooldown_minutes: number;
 };
@@ -26,6 +27,7 @@ type State = {
   batch_size: number;
   last_cleanup: Cleanup | null;
   alerts: { last_status: string; next_allowed?: number };
+  recovery_pending: boolean;
 };
 
 export function Maintenance() {
@@ -107,6 +109,7 @@ export function Maintenance() {
           />
           启用转发异常汇总
         </label>
+        <label className="mt-3 flex items-center gap-2 text-sm"><input className="!w-4" type="checkbox" checked={form.recovery_enabled} onChange={(e) => change("recovery_enabled", e.target.checked)} />故障清空后发送一次恢复通知（默认关闭）</label>
         <p className="mt-2 text-xs leading-6 text-muted">
           每分钟检查新增及积压失败，按账号、任务和错误类型汇总，通过下方已启用的通知渠道发送。冷却期间的失败会在冷却结束后合并通知，重启后仍有效。
         </p>

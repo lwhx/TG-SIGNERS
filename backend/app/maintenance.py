@@ -27,6 +27,7 @@ class MaintenancePolicy(BaseModel):
     relay_sent_days: int = Field(90, ge=7, le=3650)
     relay_failed_days: int = Field(180, ge=30, le=3650)
     alert_enabled: bool = True
+    recovery_enabled: bool = False
     alert_window_minutes: int = Field(5, ge=1, le=60)
     alert_cooldown_minutes: int = Field(30, ge=5, le=1440)
 
@@ -55,6 +56,7 @@ def maintenance_status():
         "batch_size": BATCH_SIZE,
         "last_cleanup": json.loads(get_setting("last_cleanup", "null")),
         "alerts": get_ledger().alert_status(),
+        "recovery_pending": get_setting("relay_recovery_pending", "0") == "1",
     }
 
 
@@ -140,9 +142,38 @@ async def check_relay_alerts():
         # If any channel succeeds, do not duplicate alerts on the working channel.
         success = any(item.get("ok") for item in results)
         await asyncio.to_thread(ledger.complete_alert, claim["sequence"], success)
+        if success:
+            await asyncio.to_thread(set_setting, "relay_recovery_pending", "1")
         if not success:
             bus.emit("转发异常告警发送失败，请检查通知渠道；冷却后将重新检查。", "WARNING")
     except Exception as exc:
         if claim and ledger:
             await asyncio.to_thread(ledger.complete_alert, claim["sequence"], False)
         bus.emit(f"转发异常告警检查未完成：{type(exc).__name__}", "WARNING")
+
+
+async def check_relay_recovery():
+    """Opt-in one-shot notification after a previously alerted incident backlog clears.
+
+    The durable pending flag is armed only after at least one failure alert
+    was accepted by a provider. An offline check never claims success;
+    delivery outcomes are read from the ledger, not from Telegram inference.
+    """
+    try:
+        config = await asyncio.to_thread(policy)
+        if not config.recovery_enabled:
+            return
+        if await asyncio.to_thread(get_setting, "relay_recovery_pending", "0") != "1":
+            return
+        from .relay_operations import current_fault_count
+        if await asyncio.to_thread(current_fault_count):
+            return
+        results = await notify(
+            "转发异常已恢复",
+            "当前保留的转发记录中已没有失败或待核查项。此通知只表示故障账本已清空，"
+            "不代表外部 Bot 已完成转存或第三方任务。",
+        )
+        if any(item.get("ok") for item in results):
+            await asyncio.to_thread(set_setting, "relay_recovery_pending", "0")
+    except Exception as exc:
+        bus.emit(f"恢复通知检查未完成：{type(exc).__name__}", "WARNING")
