@@ -1,6 +1,6 @@
 # tg-signer Dashboard
 
-面向 Telegram 签到、自动化与消息监控的单容器 Web 控制台（当前版本：`1.1.0`）。
+面向 Telegram 签到、自动化与消息监控的单容器 Web 控制台（当前版本：`1.2.0`）。
 
 当前仓库：<https://github.com/lwhx/TG-SIGNERS> · Dashboard 原作者：<https://github.com/dongbo501/TG-SIGNER> · 上游执行器：<https://github.com/amchii/tg-signer>
 
@@ -11,6 +11,8 @@
 上游执行器基于 `fc8905db2ee74e2d9afc135cce88b50be35b6212`（版本 `0.9.1`），保留源码和 BSD-3-Clause 许可证。**本仓库已在内置执行器基础上添加自定义 `relay_message` 转发 Handler 与持久化去重，不再与原始上游源码完全一致。** 原签到、Monitor 和自动化 Handler 保留。
 
 P3 已增加数据库聚合、后台标签页暂停刷新、历史保留策略和转发异常汇总。入口为「系统设置 → 运行与历史保留」：清理默认关闭，启用后分批处理过期历史并保留成功投递去重标记。详见 [P3 运行维护与使用说明](docs/P3-OPERATIONS.md)。
+
+**P8 新增**：「系统设置」可创建/下载/导入加密备份，验证后**下次容器重启**才恢复数据库和密钥；新增只读性能基线与 SQLite 迁移版本；GHCR 支持 AMD64 / ARM64。Dashboard 会在恢复前保留回退快照，不会在运行中直接替换 SQLite。升级前仍建议停机完整备份 `data/`。具体操作请先读 [P8 加密备份与升级手册](docs/P8-MAINTENANCE-RELEASE.md)。
 
 ## 1. 项目目录
 
@@ -23,7 +25,13 @@ P3 已增加数据库聚合、后台标签页暂停刷新、历史保留策略�
 ├── backend/
 │   ├── requirements.txt
 │   ├── app/
-│   │   ├── main.py               # REST API、Cookie 鉴权、WS、静态页面
+│   │   ├── main.py               # WebSocket、旧版兼容路由、静态页面
+│   │   ├── panel_api.py          # 登录、安全 Cookie 与健康检查路由
+│   │   ├── backup_core.py        # 加密备份与冷启动可回滚恢复
+│   │   ├── backup_api.py         # 备份导入、下载、校验和暂存恢复
+│   │   ├── restore_boot.py       # Uvicorn 启动前的恢复入口
+│   │   ├── schema_migrations.py  # SQLite schema 版本及迁移
+│   │   ├── performance.py        # 性能指标采样
 │   │   ├── auth.py               # Telegram 多步骤登录状态机
 │   │   ├── security.py           # Argon2、JWT、Fernet 加密、限流
 │   │   ├── schemas.py            # Pydantic 请求与上游配置校验
