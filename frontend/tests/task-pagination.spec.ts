@@ -20,6 +20,7 @@ async function openTasks(page: Page, count: number) {
         failure_pattern: "",
         response_timeout: 30,
         folder: "",
+        group_name: "",
         config: { chats: [] },
         next_run: null,
         last_run: null,

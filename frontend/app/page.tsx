@@ -79,6 +79,8 @@ import { Tools } from "@/components/tools";
 import { Logs } from "@/components/logs";
 import { RelayHistory } from "@/components/relay-history";
 import { FaultCenter } from "@/components/fault-center";
+import { TaskVersions } from "@/components/task-versions";
+import { TaskBatchActions } from "@/components/task-batch-actions";
 const navigation: [Page, string, any][] = [
   ["overview", "概览", LayoutDashboard],
   ["accounts", "Telegram 账号", Users],
@@ -120,7 +122,28 @@ export default function Home() {
   const [batch, setBatch] = useState<Task | null>(null);
   const [selectedAccounts, setSelectedAccounts] = useState<number[]>([]);
   const [search, setSearch] = useState("");
+  const [groupFilter, setGroupFilter] = useState("all");
+  const [selectedTaskIds, setSelectedTaskIds] = useState<number[]>([]);
+  const [versionsTask, setVersionsTask] = useState<Task | null>(null);
   const taskSearch = search.trim().toLowerCase();
+  const groupNames = Array.from(new Set(tasks.map(t => t.group_name || "").filter(Boolean)))
+    .sort((a,b) => a.localeCompare(b,"zh-CN"));
+  const filteredTasks = tasks.filter(t =>
+    (page === "tasks" ? t.kind === "signer" : t.kind !== "signer") &&
+    (groupFilter === "all" ||
+      (groupFilter === "ungrouped" ? !t.group_name : t.group_name === groupFilter.slice(6))) &&
+    (t.name.toLowerCase().includes(taskSearch) ||
+      (t.kind === "signer" && t.config.chats?.some(
+        (chat: {chat_id?: string | number; name?: string}) =>
+          [chat.chat_id, chat.name].some(value =>
+            String(value ?? "").toLowerCase().includes(taskSearch)
+          ),
+      )))
+  );
+  useEffect(() => {
+    setSelectedTaskIds([]);
+    setGroupFilter("all");
+  }, [page]);
   useEffect(() => {
     const stored = window.localStorage.getItem("tg-signer-theme");
     const enabled = stored
@@ -182,6 +205,21 @@ export default function Home() {
     accounts.find((a) => a.id === id)?.name || "未知账号";
   const taskColumns: ColumnDef<Task, any>[] = [
     {
+      id: "select",
+      header: () => <button type="button" className="text-xs underline" onClick={() => {
+        const ids = filteredTasks.slice(0,50).map(t=>t.id);
+        setSelectedTaskIds(old=>ids.every(id=>old.includes(id))
+          ? old.filter(id=>!ids.includes(id))
+          : Array.from(new Set([...old,...ids])).slice(0,50));
+      }}>全选</button>,
+      cell: ({row}) => <input type="checkbox" className="!w-4"
+        aria-label={"选择任务 "+row.original.name}
+        checked={selectedTaskIds.includes(row.original.id)}
+        onChange={e=>setSelectedTaskIds(old=>e.target.checked
+          ? Array.from(new Set([...old,row.original.id])).slice(0,50)
+          : old.filter(id=>id!==row.original.id))}/>,
+    },
+    {
       accessorKey: "name",
       header: "任务名称 / 目标",
       cell: ({ row }) => (
@@ -221,6 +259,11 @@ export default function Home() {
           </div>
         </div>
       ),
+    },
+    {
+      accessorKey: "group_name",
+      header: "管理分组",
+      cell: ({row}) => <span className="text-xs font-medium">{row.original.group_name || "未分组"}</span>,
     },
     {
       accessorKey: "account_id",
@@ -336,6 +379,27 @@ export default function Home() {
                 >
                   导出 YAML
                 </a>
+                <ActionButton
+                  variant="ghost"
+                  className="!h-8 w-full !justify-start !px-3 !text-xs"
+                  action={async () => {
+                    const result = await post<{id:number}>(
+                      "/tasks/"+row.original.id+"/duplicate", {}
+                    );
+                    toast.success("已复制为停用任务 #"+result.id);
+                    refresh();
+                  }}
+                >
+                  复制任务（默认停用）
+                </ActionButton>
+                <DialogClose asChild>
+                  <button
+                    className="block w-full rounded px-3 py-2 text-left text-xs hover:bg-slate-50"
+                    onClick={() => setVersionsTask(row.original)}
+                  >
+                    配置版本 / 回滚
+                  </button>
+                </DialogClose>
                 {row.original.kind === "signer" && (
                   <DialogClose asChild>
                     <button
@@ -824,6 +888,13 @@ export default function Home() {
                         onChange={(e) => setSearch(e.target.value)}
                       />
                     </div>
+                    <select className="!h-9 text-xs" aria-label="筛选管理分组"
+                      value={groupFilter}
+                      onChange={e=>{setGroupFilter(e.target.value);setSelectedTaskIds([]);}}>
+                      <option value="all">全部分组</option>
+                      <option value="ungrouped">未分组</option>
+                      {groupNames.map(name=><option key={name} value={"group:"+name}>{name}</option>)}
+                    </select>
                     {page === "tasks" && (
                       <ActionButton
                         variant="outline"
@@ -841,25 +912,15 @@ export default function Home() {
                     )}
                   </div>
                 </div>
+                {selectedTaskIds.length>0 && <TaskBatchActions
+                  selected={tasks.filter(t=>selectedTaskIds.includes(t.id))}
+                  groups={groupNames}
+                  onDone={()=>{setSelectedTaskIds([]);refresh();}}
+                />}
                 <DataTable
                   key={page}
                   resetPageKey={taskSearch}
-                  data={tasks.filter(
-                    (t) =>
-                      (page === "tasks"
-                        ? t.kind === "signer"
-                        : t.kind !== "signer") &&
-                      (t.name.toLowerCase().includes(taskSearch) ||
-                        (t.kind === "signer" &&
-                          t.config.chats?.some(
-                            (chat: { chat_id?: string | number; name?: string }) =>
-                              [chat.chat_id, chat.name].some((value) =>
-                                String(value ?? "")
-                                  .toLowerCase()
-                                  .includes(taskSearch),
-                              ),
-                          ))),
-                  )}
+                  data={filteredTasks}
                   columns={taskColumns}
                   empty={
                     page === "tasks" ? "还没有签到任务" : "还没有自动化规则"
@@ -893,9 +954,13 @@ export default function Home() {
           task={editor.task}
           kind={editor.kind}
           accounts={accounts}
+          groups={groupNames}
           onClose={() => setEditor(null)}
         />
       )}{" "}
+      {versionsTask && <TaskVersions task={versionsTask}
+        onClose={()=>setVersionsTask(null)}
+        onChanged={refresh}/>}
       {accountEdit && (
         <EditAccount
           account={accountEdit}

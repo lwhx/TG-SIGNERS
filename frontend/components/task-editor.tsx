@@ -20,6 +20,7 @@ import { ActionButton, Field } from "./common";
 import { Button } from "./ui/button";
 import { Dialog, DialogContent } from "./ui/dialog";
 import { RuleEditor } from "./rule-editor";
+import { FullRelayPreview } from "./full-relay-preview";
 export const templates: any = {
   signer: {
     chats: [
@@ -167,11 +168,13 @@ export function TaskEditor({
   task,
   kind,
   accounts,
+  groups = [],
   onClose,
 }: {
   task?: Task;
   kind: Task["kind"];
   accounts: Account[];
+  groups?: string[];
   onClose: () => void;
 }) {
   const refresh = useUI((s) => s.refresh);
@@ -192,6 +195,7 @@ export function TaskEditor({
       failure_pattern: "",
       response_timeout: 20,
       folder: "",
+      group_name: "",
     },
   );
   const [config, setConfig] = useState<any>(
@@ -642,6 +646,9 @@ export function TaskEditor({
           ) : (
             <RuleEditor kind={kind} config={config} onChange={updateConfig} />
           )}
+          {kind === "automation" && (
+            <FullRelayPreview config={advanced ? raw : config} />
+          )}
           {kind === "signer" && (
             <>
               <div className="border-t border-line pt-5">
@@ -724,6 +731,18 @@ export function TaskEditor({
               </div>
             </>
           )}
+          <Field label="管理分组（可选）" hint="仅用于 Dashboard 分类，与 Telegram Folder 完全独立。">
+            <input
+              value={form.group_name || ""}
+              list="task-group-suggestions"
+              maxLength={60}
+              onChange={(e) => change("group_name", e.target.value)}
+              placeholder="例如：115 转存、日常签到"
+            />
+            <datalist id="task-group-suggestions">
+              {groups.map(group => <option key={group} value={group} />)}
+            </datalist>
+          </Field>
           <Field
             label="从 Folder 发现对话（可选）"
             hint="普通 Telegram 文件夹名称或 ID；支持手动添加的对话。"

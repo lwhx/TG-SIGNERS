@@ -62,6 +62,7 @@ from .db import (
     Task,
     engine,
     get_setting,
+    migrate_task_groups,
     set_setting,
 )
 from .engine import task_engine
@@ -70,6 +71,7 @@ from .maintenance import check_relay_alerts, check_relay_recovery, scheduled_cle
 from .maintenance import router as maintenance_router
 from .notifications import notify
 from .relay import RelayPreviewInput, preview_match
+from .relay_full_preview import router as relay_full_preview_router
 from .relay_history import router as relay_history_router
 from .relay_operations import router as relay_operations_router
 from .relay_retry import process_retries
@@ -98,6 +100,14 @@ from .security import (
     token,
     valid_token,
 )
+from .task_admin import (
+    add_revision,
+    ensure_baseline,
+    initialize_task_versions,
+    mutation_lock,
+    task_snapshot,
+)
+from .task_admin import router as task_admin_router
 from .telegram import telegram
 
 
@@ -105,6 +115,8 @@ from .telegram import telegram
 async def lifespan(app):
     os.umask(0o077)
     Base.metadata.create_all(engine)
+    migrate_task_groups()
+    initialize_task_versions()
     if not get_setting("password_hash"):
         password = os.getenv("ADMIN_PASSWORD") or persistent_secret(
             "initial-password.txt", lambda: secrets.token_urlsafe(20)
@@ -507,15 +519,18 @@ def tasks():
 
 @api.post("/tasks", tags=["任务"], status_code=201, summary="创建签到 / 自动化 / 监控任务")
 async def create_task(data: TaskInput):
-    with Session() as db:
-        get_account(db, data.account_id)
-        task = Task(**data.model_dump())
-        db.add(task)
-        db.commit()
-        task_id = task.id
-    await task_engine.reconcile(task_id)
-    with Session() as db:
-        return task_dict(db.get(Task, task_id))
+    async with mutation_lock:
+        with Session() as db:
+            get_account(db, data.account_id)
+            task = Task(**data.model_dump())
+            db.add(task)
+            db.flush()
+            add_revision(db, task, "created")
+            db.commit()
+            task_id = task.id
+        await task_engine.reconcile(task_id)
+        with Session() as db:
+            return task_dict(db.get(Task, task_id))
 
 
 @api.post(
@@ -557,31 +572,47 @@ def task_detail(task_id: int):
 
 @api.put("/tasks/{task_id}", tags=["任务"])
 async def update_task(task_id: int, data: TaskInput):
-    await task_engine.stop(task_id)
-    with Session() as db:
-        task = db.get(Task, task_id)
-        if not task:
-            raise HTTPException(404, "任务不存在")
-        get_account(db, data.account_id)
-        for key, value in data.model_dump().items():
-            setattr(task, key, value)
-        task.next_run = None
-        db.commit()
-    await task_engine.reconcile(task_id)
-    return task_detail(task_id)
+    async with mutation_lock:
+        with Session() as db:
+            task = db.get(Task, task_id)
+            if not task:
+                raise HTTPException(404, "任务不存在")
+            get_account(db, data.account_id)
+            changed = task_snapshot(task) != data.model_dump()
+        if not changed:
+            return task_detail(task_id)
+        await task_engine.stop(task_id)
+        try:
+            with Session() as db:
+                task = db.get(Task, task_id)
+                ensure_baseline(db, task)
+                for key, value in data.model_dump().items():
+                    setattr(task, key, value)
+                task.next_run = None
+                add_revision(db, task, "updated")
+                db.commit()
+        finally:
+            await task_engine.reconcile(task_id)
+        return task_detail(task_id)
 
 
 @api.delete("/tasks/{task_id}", tags=["任务"])
 async def delete_task(task_id: int):
-    await task_engine.stop(task_id)
-    with Session() as db:
-        task = db.get(Task, task_id)
-        if not task:
-            raise HTTPException(404, "任务不存在")
-        db.delete(task)
-        db.commit()
-    await task_engine.reconcile(task_id)
-    return {"status": "deleted"}
+    async with mutation_lock:
+        with Session() as db:
+            if not db.get(Task, task_id):
+                raise HTTPException(404, "任务不存在")
+        await task_engine.stop(task_id)
+        try:
+            with Session() as db:
+                task = db.get(Task, task_id)
+                if not task:
+                    raise HTTPException(404, "任务不存在")
+                db.delete(task)
+                db.commit()
+        finally:
+            await task_engine.reconcile(task_id)
+        return {"status": "deleted"}
 
 
 @api.post(
@@ -666,6 +697,7 @@ async def multi_run(task_id: int, account_ids: list[int]):
             task = Task(**fields)
             db.add(task)
             db.flush()
+            add_revision(db, task, "multi-run-copy")
             targets.append(task.id)
         db.commit()
     return [task_engine.launch(i) for i in targets if i not in task_engine.running]
@@ -1163,6 +1195,8 @@ def docs():
     return get_swagger_ui_html(openapi_url="/api/openapi.json", title="tg-signer API")
 
 
+api.include_router(task_admin_router)
+api.include_router(relay_full_preview_router)
 api.include_router(relay_history_router)
 api.include_router(relay_operations_router)
 api.include_router(relay_retry_router)

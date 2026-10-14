@@ -65,7 +65,18 @@ class TaskInput(BaseModel):
     failure_pattern: str = Field(default="", max_length=1000)
     response_timeout: int = Field(default=20, ge=1, le=300)
     folder: str = Field(default="", max_length=100)
+    group_name: str = Field(default="", max_length=60)
     config: dict
+
+    @field_validator("group_name")
+    @classmethod
+    def normalize_group(cls, value: str) -> str:
+        import re
+
+        value = value.strip()
+        if re.search(r"[\x00-\x1f\x7f]", value):
+            raise ValueError("管理分组不能包含控制字符")
+        return value
 
     @model_validator(mode="after")
     def valid(self):
