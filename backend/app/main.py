@@ -105,9 +105,9 @@ from .task_admin import (
     ensure_baseline,
     initialize_task_versions,
     mutation_lock,
-    router as task_admin_router,
     task_snapshot,
 )
+from .task_admin import router as task_admin_router
 from .telegram import telegram
 
 
