@@ -9,6 +9,12 @@ on:
 permissions:
   contents: read
 
+# Keep the latest PR revision only; avoid duplicate QEMU ARM64 builds.
+# Main pushes remain strictly ordered and are never cancelled.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   backend:
     runs-on: ubuntu-latest
@@ -59,7 +65,7 @@ jobs:
             fi
             sleep 1
           done
-          npx playwright test tests/relay-history.spec.ts tests/relay-recovery.spec.ts tests/operations.spec.ts tests/task-pagination.spec.ts tests/p6-management.spec.ts tests/p7-relay-expansion.spec.ts
+          npx playwright test tests/relay-history.spec.ts tests/relay-recovery.spec.ts tests/operations.spec.ts tests/task-pagination.spec.ts tests/p6-management.spec.ts tests/p7-relay-expansion.spec.ts tests/p8-maintenance.spec.ts
 
   compose:
     runs-on: ubuntu-latest
@@ -123,3 +129,18 @@ jobs:
       - name: Stop test container
         if: always()
         run: docker compose down --remove-orphans
+
+
+  arm64-smoke:
+    # GitHub provides native Linux ARM64 runners for public repositories.
+    # Avoid repeatedly compiling Python C extensions under slow QEMU.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build ARM64 release Dockerfile natively
+        run: docker build -t tg-signers:arm64-ci .
+      - name: Verify ARM64 runtime packages and binary ABI
+        run: |
+          docker image inspect tg-signers:arm64-ci --format '{{.Architecture}}' | grep -x arm64
+          docker run --rm --entrypoint python tg-signers:arm64-ci -c "import platform; import fastapi, sqlalchemy, cryptography, pyrogram, tg_signer; assert platform.machine() == 'aarch64'; print('ARM64 Python runtime imports verified')"

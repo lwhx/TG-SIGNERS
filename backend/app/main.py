@@ -53,16 +53,14 @@ from tg_signer.core import (
 from tg_signer.sign_record_store import SignRecordStore
 
 from .auth import auth, disconnect, persist_account, telegram_error
+from .backup_api import router as backup_router
 from .db import (
     DATA,
     Account,
-    Base,
     Run,
     Session,
     Task,
-    engine,
     get_setting,
-    migrate_task_groups,
     set_setting,
 )
 from .engine import task_engine
@@ -70,6 +68,9 @@ from .events import LogBridge, bus
 from .maintenance import check_relay_alerts, check_relay_recovery, scheduled_cleanup
 from .maintenance import router as maintenance_router
 from .notifications import notify
+from .panel_api import private_router as panel_private_router
+from .panel_api import public_router as panel_public_router
+from .performance import router as performance_router
 from .relay import RelayPreviewInput, preview_match
 from .relay_backfill import recover_backfills, stop_all_backfills
 from .relay_backfill import router as relay_backfill_router
@@ -79,11 +80,10 @@ from .relay_operations import router as relay_operations_router
 from .relay_p7 import router as relay_p7_router
 from .relay_retry import process_retries
 from .relay_retry import router as relay_retry_router
+from .schema_migrations import migrate_schema
 from .schemas import (
     AccountUpdate,
     Check2FA,
-    PanelLogin,
-    PasswordChange,
     SendCode,
     SignIn,
     TaskInput,
@@ -92,15 +92,12 @@ from .schemas import (
 )
 from .security import (
     COOKIE,
-    SECURE,
-    TTL,
     decrypt,
     encrypt,
     passwords,
     persistent_secret,
     rate_limit,
     require_admin,
-    token,
     valid_token,
 )
 from .task_admin import (
@@ -112,13 +109,13 @@ from .task_admin import (
 )
 from .task_admin import router as task_admin_router
 from .telegram import telegram
+from .version import DASHBOARD_VERSION
 
 
 @asynccontextmanager
 async def lifespan(app):
     os.umask(0o077)
-    Base.metadata.create_all(engine)
-    migrate_task_groups()
+    migrate_schema()
     initialize_task_versions()
     recover_backfills()
     if not get_setting("password_hash"):
@@ -162,7 +159,7 @@ async def lifespan(app):
 
 app = FastAPI(
     title="tg-signer Dashboard API",
-    version="1.1.0",
+    version=DASHBOARD_VERSION,
     description="Telegram 账号、签到、自动化与监控管理。除面板登录、健康检查外，所有接口需要 HttpOnly JWT Cookie 或 Bearer JWT。",
     lifespan=lifespan,
     docs_url=None,
@@ -170,6 +167,7 @@ app = FastAPI(
     openapi_url=None,
 )
 api = APIRouter(prefix="/api", dependencies=[Depends(require_admin)])
+app.include_router(panel_public_router)
 
 
 @app.middleware("http")
@@ -181,7 +179,12 @@ async def security_headers(request, call_next):
         ) or request.headers.get("sec-fetch-site") == "cross-site":
             return JSONResponse({"detail": "不允许跨站请求"}, status_code=403)
         length = request.headers.get("content-length", "0")
-        if not length.isdigit() or int(length) > 10 * 1024 * 1024:
+        max_body = (
+            101 * 1024 * 1024
+            if request.url.path == "/api/maintenance/backups/import"
+            else 10 * 1024 * 1024
+        )
+        if not length.isdigit() or int(length) > max_body:
             return JSONResponse({"detail": "请求体超过 10 MB"}, status_code=413)
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -217,48 +220,6 @@ async def timeout_error(request, exc):
 @app.exception_handler(ValueError)
 async def value_error(request, exc):
     return JSONResponse({"detail": "参数或配置无效：" + str(exc)[:500]}, status_code=400)
-
-
-@app.get("/api/health", tags=["系统"], summary="容器健康检查")
-def health():
-    with Session() as db:
-        db.execute(select(1))
-    return {"status": "ok", "version": "1.1.0", "tg_signer": upstream_version}
-
-
-@app.post("/api/panel/login", tags=["面板鉴权"], summary="密码登录，签发 HttpOnly JWT Cookie")
-def panel_login(data: PanelLogin, request: Request, response: Response):
-    rate_limit("panel:" + (request.client.host if request.client else "local"))
-    if not passwords.verify(data.password, get_setting("password_hash")):
-        raise HTTPException(401, "管理密码错误")
-    jwt = token()
-    response.set_cookie(COOKIE, jwt, max_age=TTL, httponly=True, secure=SECURE, samesite="strict")
-    return {"status": "authenticated", "expires_in": TTL}
-
-
-@api.get("/panel/me", tags=["面板鉴权"])
-def panel_me():
-    return {"user": "admin"}
-
-
-@api.post("/panel/logout", tags=["面板鉴权"])
-def panel_logout(response: Response):
-    response.delete_cookie(COOKIE, secure=SECURE, samesite="strict")
-    return {"status": "ok"}
-
-
-@api.put("/panel/password", tags=["面板鉴权"], summary="修改密码并使旧 JWT 失效")
-def password_change(data: PasswordChange, response: Response):
-    rate_limit("password-change", 5, 300)
-    if not passwords.verify(data.current_password, get_setting("password_hash")):
-        raise HTTPException(400, "当前密码错误")
-    set_setting("password_hash", passwords.hash(data.new_password))
-    set_setting("token_version", secrets.token_hex(16))
-    response.set_cookie(
-        COOKIE, token(), max_age=TTL, httponly=True, secure=SECURE, samesite="strict"
-    )
-    (DATA / "initial-password.txt").unlink(missing_ok=True)
-    return {"status": "ok"}
 
 
 @api.post(
@@ -1200,6 +1161,9 @@ def docs():
     return get_swagger_ui_html(openapi_url="/api/openapi.json", title="tg-signer API")
 
 
+api.include_router(panel_private_router)
+api.include_router(backup_router)
+api.include_router(performance_router)
 api.include_router(task_admin_router)
 api.include_router(relay_full_preview_router)
 api.include_router(relay_backfill_router)
