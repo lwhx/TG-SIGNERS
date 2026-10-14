@@ -71,6 +71,7 @@ from .maintenance import check_relay_alerts, check_relay_recovery, scheduled_cle
 from .maintenance import router as maintenance_router
 from .notifications import notify
 from .relay import RelayPreviewInput, preview_match
+from .relay_full_preview import router as relay_full_preview_router
 from .relay_history import router as relay_history_router
 from .relay_operations import router as relay_operations_router
 from .relay_retry import process_retries
@@ -1194,6 +1195,7 @@ def docs():
 
 
 api.include_router(task_admin_router)
+api.include_router(relay_full_preview_router)
 api.include_router(relay_history_router)
 api.include_router(relay_operations_router)
 api.include_router(relay_retry_router)
