@@ -16,7 +16,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 
-from .db import Account, Session, Task, TaskVersion, now
+from .db import Account, Session, Task, TaskVersion
 from .engine import task_engine
 from .schemas import TaskInput
 
