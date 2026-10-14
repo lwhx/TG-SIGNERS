@@ -8,7 +8,7 @@
 
 前端采用 Next.js 14 App Router 静态导出、React、Tailwind CSS、Shadcn 风格的 Radix UI 组件、TanStack Table、Lucide、Zustand 和 Recharts；FastAPI 同时提供静态网页、REST API 与 WebSocket；前端支持 EventSource 自动回退。后端采用 SQLAlchemy + SQLite WAL、APScheduler、Kurigram（兼容 Pyrogram）。
 
-上游代码固定于 `fc8905db2ee74e2d9afc135cce88b50be35b6212`，版本 `0.9.1`，保留完整源码和 BSD-3-Clause 许可证。功能依据上游 README、配置模型、签到/监控执行器、automation 引擎及使用文档实现。未修改上游源码。
+上游执行器基于 `fc8905db2ee74e2d9afc135cce88b50be35b6212`（版本 `0.9.1`），保留源码和 BSD-3-Clause 许可证。**本仓库已在内置执行器基础上添加自定义 `relay_message` 转发 Handler 与持久化去重，不再与原始上游源码完全一致。** 原签到、Monitor 和自动化 Handler 保留。
 
 ## 1. 项目目录
 
@@ -109,6 +109,12 @@ Automation 复用上游触发器、过滤器、模板、handler、持久状态�
 
 > 当前仓库使用自己的 GHCR 镜像，源码更新后由 GitHub Actions 在 `main` CI 全部通过时自动发布。正式迁移前请先阅读 [自有 GHCR 发布与数据保护指南](docs/GHCR-DEPLOY.md)，备份原来的 `data/`，不要切换到尚未发布的镜像。
  
+## 通用消息监控与转发（P1）
+
+在 **自动化与转发 → 新建自动化** 中点击「通用消息转发」模板，即可图形化设置多个来源、多个目标、`forward/copy/text/extract/template` 五种模式以及 `message/content/off` 去重策略。支持带捕获组的正则测试、最多 25 个投递目标、持久化 SQLite 状态和失败冷却机制。
+
+可选的「115 链接转存 Bot 示例」仅负责识别并发送分享链接，真正的转存过程仍由目标 Bot 完成。详细使用和数据保护说明见 [通用消息转发文档](docs/MESSAGE-RELAY.md)。
+
 ## 4. 单容器部署
 
 镜像发布在 `ghcr.io/lwhx/tg-signers:latest`（Linux amd64）。在项目目录（或只放一份 `docker-compose.yml` 的目录）中执行：
