@@ -54,7 +54,17 @@ async def prepare_album(client: Any, event: Any, *, key: str) -> RelayAlbum:
     raw = await asyncio.wait_for(
         get_group(event.chat_id, message.id), timeout=20
     )
-    members = sorted(list(raw), key=lambda item: getattr(item, "id", 0))
+    # Telegram does not expose an album total in each update. Read twice
+    # after a settle interval, failing closed if additional parts arrive.
+    await asyncio.sleep(1)
+    repeated = await asyncio.wait_for(
+        get_group(event.chat_id, message.id), timeout=20
+    )
+    observed = tuple(sorted(getattr(item, "id", 0) for item in raw))
+    stable = tuple(sorted(getattr(item, "id", 0) for item in repeated))
+    if observed != stable:
+        raise ValueError("MediaGroupStillArriving")
+    members = sorted(list(repeated), key=lambda item: getattr(item, "id", 0))
     ids = tuple(getattr(item, "id", 0) for item in members)
     if not 2 <= len(ids) <= 10 or len(set(ids)) != len(ids) or min(ids) <= 0:
         raise ValueError("IncompleteMediaGroup")
