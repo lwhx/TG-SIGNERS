@@ -61,7 +61,7 @@ test("P7 Bot results, album statistics, backfill preflight and explicit start (m
   });
   await page.goto("/");
   await page.locator("nav").getByRole("button",{name:"转发增强"}).click();
-  await expect(page.getByText("Bot 确认成功")).toBeVisible();
+  await expect(page.getByRole("cell",{name:"Bot 确认成功"})).toBeVisible();
   await expect(page.getByText("整组已发送")).toBeVisible();
   await expect(page.getByText("3",{exact:true}).first()).toBeVisible();
   await page.getByLabel("增强功能任务").selectOption("55");
