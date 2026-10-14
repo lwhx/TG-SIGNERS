@@ -23,7 +23,9 @@ jobs:
           python -m pip install -r backend/requirements.txt -e './upstream/tg-signer[yaml]'
           python -m pip install pytest pytest-asyncio ruff==0.14.6
       - name: Lint existing backend using stable compatibility rules
-        run: ruff check backend --select E4,E7,E9,F,I,B --ignore B008
+        run: |
+          ruff check backend --select E4,E7,E9,F,I,B --ignore B008 --diff || true
+          ruff check backend --select E4,E7,E9,F,I,B --ignore B008
       - name: Dashboard API, accounts, and encrypted sessions
         run: python -m pytest -q backend/tests
       - name: Embedded tg-signer executor regression
