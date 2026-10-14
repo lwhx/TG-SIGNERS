@@ -101,6 +101,25 @@ def validate_relay_config(config: dict[str, Any]) -> None:
                     raise ValueError(f"第 {index} 个转发目标模式无效")
                 if target.get("dedup", "message") not in DEDUP:
                     raise ValueError(f"第 {index} 个转发目标去重策略无效")
+                album_mode = target.get("album_mode", "single")
+                if album_mode not in {"single", "album"}:
+                    raise ValueError(f"第 {index} 个媒体组模式无效")
+                if album_mode == "album" and mode not in {"forward", "copy"}:
+                    raise ValueError(f"第 {index} 个媒体组整组发送仅适用于原样转发或复制")
+                if target.get("track_bot_result", False):
+                    if type(target["track_bot_result"]) is not bool:
+                        raise ValueError(f"第 {index} 个 Bot 追踪开关无效")
+                    timeout = target.get("bot_timeout_minutes", 120)
+                    if type(timeout) is not int or not 1 <= timeout <= 10080:
+                        raise ValueError(f"第 {index} 个 Bot 回复等待时间无效")
+                    for key in ("bot_success_pattern", "bot_failure_pattern"):
+                        expression = target.get(key)
+                        if not isinstance(expression, str) or not expression or len(expression) > 500:
+                            raise ValueError(f"第 {index} 个 Bot 结果正则不能为空且不得超过 500 字符")
+                        try:
+                            regex.compile(expression)
+                        except regex.error as exc:
+                            raise ValueError(f"第 {index} 个 Bot 结果正则错误：{exc}") from exc
                 pattern = target.get("pattern", "")
                 if mode == "extract" and not pattern:
                     raise ValueError(f"第 {index} 个目标必须设置提取正则")
