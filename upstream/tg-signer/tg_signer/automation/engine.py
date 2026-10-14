@@ -491,7 +491,8 @@ class UserAutomation(BaseUserWorker[AutomationConfig]):
             worker=self,
             workdir=self.workdir,
         )
-        for handler_cfg in rule.handlers:
+        for handler_index, handler_cfg in enumerate(rule.handlers):
+            ctx.handler_index = handler_index
             handler = get_handler(handler_cfg.handler)
             if not handler:
                 self.log(f"未找到handler: {handler_cfg.handler}", level="WARNING")
