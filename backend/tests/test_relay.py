@@ -81,3 +81,46 @@ def test_authenticated_regex_preview_endpoint(admin: TestClient):
         "text_rule": "regex", "pattern": "(", "sample": "abc"
     })
     assert bad.status_code == 422
+
+
+def test_relay_never_subscribes_to_every_chat():
+    cfg = _relay_config()
+    cfg["rules"][0]["triggers"][0]["params"] = {}
+    with pytest.raises(ValueError, match="指定来源对话"):
+        validate_relay_config(cfg)
+    cfg["rules"][0]["filters"] = {"chat_ids": [-100123456789]}
+    validate_relay_config(cfg)
+
+
+def test_invalid_template_variable_is_rejected():
+    cfg = _relay_config({
+        "chat_id": "@target", "mode": "template",
+        "template": "{text.__class__}",
+    })
+    with pytest.raises(ValueError, match="简单标识符"):
+        validate_relay_config(cfg)
+    cfg["rules"][0]["handlers"][0]["params"]["targets"][0]["template"] = (
+        "转发消息：{text}"
+    )
+    validate_relay_config(cfg)
+
+
+def test_relay_dashboard_task_schema_stays_compatible():
+    from backend.app.schemas import TaskInput
+
+    config = _relay_config()
+    parsed = TaskInput.model_validate({
+        "name": "多来源消息转发",
+        "account_id": 1,
+        "kind": "automation",
+        "config": config,
+    })
+    assert parsed.config["rules"][0]["handlers"][0]["handler"] == "relay_message"
+    assert len(parsed.config["rules"][0]["triggers"][0]["params"]["chat_ids"]) == 2
+
+
+def test_preview_requires_panel_login(client: TestClient):
+    result = client.post("/api/relay/preview", json={
+        "text_rule": "regex", "pattern": r"\\d+", "sample": "42"
+    })
+    assert result.status_code == 401
