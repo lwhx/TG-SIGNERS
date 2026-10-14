@@ -13,6 +13,8 @@ class Worker:
     def __init__(self):
         self.sent = []
         self.fail = False
+        self.task_name = "3"
+        self.account_id = 4
 
     async def send_message(self, target, text):
         if self.fail:
@@ -39,6 +41,7 @@ class Context:
         self.client = Client()
         self.vars = {"note": "example"}
         self.logs = []
+        self.handler_index = 0
 
     def log(self, msg, level="INFO"):
         self.logs.append((level, msg))
@@ -200,7 +203,7 @@ async def test_skip_own_message_and_same_chat(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_dedup_off_does_not_touch_database(tmp_path):
+async def test_dedup_off_still_records_each_attempt_for_history(tmp_path):
     ctx = Context(tmp_path)
     params = {
         "targets": [{"chat_id": "@bot", "mode": "text", "dedup": "off"}]
@@ -208,7 +211,64 @@ async def test_dedup_off_does_not_touch_database(tmp_path):
     assert await relay_message(event(), ctx, params) == "continue"
     assert await relay_message(event(), ctx, params) == "continue"
     assert len(ctx.worker.sent) == 2
-    assert not (tmp_path / "message_relay.sqlite3").exists()
+    ledger = RelayLedger(tmp_path)
+    rows = ledger.history()["items"]
+    assert len(rows) == 2
+    assert all(row["dedup"] == "off" and row["status"] == "sent" for row in rows)
+    assert rows[0]["fingerprint"] != rows[1]["fingerprint"]
+    assert all(row["retryable"] is False for row in rows)
+
+
+@pytest.mark.asyncio
+async def test_failed_delivery_manual_retry_ignores_cooldown(tmp_path):
+    ctx = Context(tmp_path)
+    ctx.worker.fail = True
+    params = {
+        "targets": [{
+            "chat_id": "@bot", "mode": "text", "retry_after_seconds": 3600
+        }]
+    }
+    incoming = event(text="original")
+    assert await relay_message(incoming, ctx, params) == "stop"
+    ledger = RelayLedger(tmp_path)
+    failed = ledger.history(status="failed")["items"][0]
+    assert failed["retryable"]
+    assert (failed["task_id"], failed["account_id"]) == (3, 4)
+    assert (failed["handler_index"], failed["target_index"], failed["part_index"]) == (0, 0, 0)
+    ctx.worker.fail = False
+    ref = (
+        failed["destination"], failed["fingerprint"],
+        failed["target_index"], failed["part_index"], failed["payload_digest"],
+    )
+    assert await relay_message(incoming, ctx, params, retry_ref=ref) == "continue"
+    sent = ledger.get(failed["destination"], failed["fingerprint"])
+    assert (sent["status"], sent["attempts"]) == ("sent", 2)
+    # Never send a successful entry a second time.
+    assert await relay_message(incoming, ctx, params, retry_ref=ref) == "continue"
+    assert len(ctx.worker.sent) == 1
+    assert ledger.get(failed["destination"], failed["fingerprint"])["attempts"] == 2
+
+
+@pytest.mark.asyncio
+async def test_manual_retry_rejects_edited_payload(tmp_path):
+    ctx = Context(tmp_path)
+    ctx.worker.fail = True
+    params = {"targets": [{"chat_id": "@bot", "mode": "text"}]}
+    await relay_message(event(text="original"), ctx, params)
+    ledger = RelayLedger(tmp_path)
+    failed = ledger.history(status="failed")["items"][0]
+    ctx.worker.fail = False
+    await relay_message(
+        event(text="changed"), ctx, params,
+        retry_ref=(
+            failed["destination"], failed["fingerprint"],
+            0, 0, failed["payload_digest"],
+        ),
+    )
+    assert ctx.worker.sent == []
+    assert ledger.get(failed["destination"], failed["fingerprint"])["attempts"] == 1
+
+
 
 
 def test_concurrent_reservation(tmp_path):
@@ -288,3 +348,73 @@ async def test_regex_all_matches_is_capped_at_twenty(tmp_path):
     }
     assert await relay_message(event(text="X" * 1000), ctx, params) == "continue"
     assert len(ctx.worker.sent) == 20
+
+
+def test_legacy_schema_migration_keeps_original_rows(tmp_path):
+    old = tmp_path / "message_relay.sqlite3"
+    with sqlite3.connect(old) as db:
+        db.execute(
+            """CREATE TABLE relay_deliveries (
+                destination TEXT NOT NULL,
+                fingerprint TEXT NOT NULL,
+                action TEXT NOT NULL,
+                source_chat TEXT NOT NULL,
+                source_message INTEGER,
+                status TEXT NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                last_error TEXT,
+                PRIMARY KEY (destination, fingerprint)
+            )"""
+        )
+        db.execute(
+            "INSERT INTO relay_deliveries VALUES (?,?,?,?,?,?,?,?,?,?)",
+            ("@target", "f" * 64, "forward", "-100", 8,
+             "failed", 1, 101, 102, "RPCError"),
+        )
+    ledger = RelayLedger(tmp_path)
+    assert ledger.history()["total"] == 1
+    entry = ledger.get("@target", "f" * 64)
+    assert (entry["status"], entry["attempts"], entry["last_error"]) == (
+        "failed", 1, "RPCError"
+    )
+    assert entry["retryable"] is False
+    assert entry["task_id"] is None
+    # Reopening must be idempotent.
+    assert RelayLedger(tmp_path).history()["total"] == 1
+
+
+def test_delivery_stats_and_bounded_query(tmp_path):
+    ledger = RelayLedger(tmp_path)
+    key = "f" * 64
+    assert ledger.reserve("@one", key, "forward", "-100", 2) == ("reserved", 1)
+    ledger.finish("@one", key, 1, True)
+    key2 = "a" * 64
+    assert ledger.reserve("@two", key2, "copy", "-100", 3) == ("reserved", 1)
+    ledger.finish("@two", key2, 1, False, "SendFailed")
+    status = ledger.stats()
+    assert (status["sent"], status["failed"], status["total"]) == (1, 1, 2)
+    assert status["success_rate"] == 50.0
+    assert sum(d["sent"] for d in status["days"]) == 1
+    assert ledger.history(page=1, page_size=1)["total"] == 2
+    assert len(ledger.history(page=2, page_size=1)["items"]) == 1
+    assert len(ledger.history(status="failed")["items"]) == 1
+    with pytest.raises(ValueError):
+        ledger.history(page_size=101)
+
+
+def test_force_retry_cannot_resend_success_or_active_lease(tmp_path):
+    ledger = RelayLedger(tmp_path)
+    fingerprint = "9" * 64
+    assert ledger.reserve("@one", fingerprint, "text", "-1", 2) == ("reserved", 1)
+    assert ledger.reserve(
+        "@one", fingerprint, "text", "-1", 2, force_failed=True
+    ) == ("inflight", None)
+    ledger.finish("@one", fingerprint, 1, True)
+    assert ledger.reserve(
+        "@one", fingerprint, "text", "-1", 2, force_failed=True
+    ) == ("duplicate", None)
+    assert ledger.reserve(
+        "@missing", "a" * 64, "text", "-1", 2, force_failed=True
+    ) == ("not_found", None)
