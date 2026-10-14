@@ -15,10 +15,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator
 
+from .bot_results import BotResultMixin
 from .relay_recovery import RelayRecoveryMixin
 
 
-class RelayLedger(RelayRecoveryMixin):
+class RelayLedger(RelayRecoveryMixin, BotResultMixin):
     """Idempotency reservations, delivery history, stats and safe replay leases."""
 
     _EXTRA_COLUMNS = {
@@ -116,6 +117,7 @@ class RelayLedger(RelayRecoveryMixin):
                 "last_status TEXT NOT NULL DEFAULT 'idle')"
             )
             db.execute("INSERT OR IGNORE INTO relay_alert_state(id) VALUES(1)")
+            self._init_bot_results(db)
             db.execute(
                 "CREATE TABLE IF NOT EXISTS relay_reviews (destination TEXT NOT NULL, fingerprint TEXT NOT NULL, "
                 "attempt INTEGER NOT NULL, decision TEXT NOT NULL, resolved_at INTEGER NOT NULL, "
@@ -153,6 +155,7 @@ class RelayLedger(RelayRecoveryMixin):
         entry["retryable"] = (
             entry["status"] == "failed"
             and not entry["needs_review"]
+            and entry["action"] not in {"album_forward", "album_copy"}
             and entry["source_message"] is not None
             and all(
                 entry.get(field) is not None
@@ -360,7 +363,7 @@ class RelayLedger(RelayRecoveryMixin):
                     else "manual_only"
                     if failure_kind == "transient"
                     and row
-                    and row["action"] in {"forward", "copy"}
+                    and row["action"] in {"forward", "copy", "album_forward", "album_copy"}
                     else "blocked",
                     destination_message,
                     retry_after_seconds,
@@ -433,6 +436,10 @@ class RelayLedger(RelayRecoveryMixin):
                     for r in rows
                     if r["status"] == "failed"
                 ],
+            )
+            db.executemany(
+                "DELETE FROM relay_bot_results WHERE destination=? AND fingerprint=?",
+                [(r["destination"], r["fingerprint"]) for r in rows],
             )
             db.executemany(
                 "DELETE FROM relay_deliveries WHERE rowid=?",
