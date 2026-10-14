@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM node:20-bookworm-slim AS frontend
+FROM --platform=$BUILDPLATFORM node:20-bookworm-slim AS frontend
 WORKDIR /build
 ENV NEXT_TELEMETRY_DISABLED=1
 COPY frontend/package.json frontend/package-lock.json ./
