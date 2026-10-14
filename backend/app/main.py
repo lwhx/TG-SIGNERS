@@ -109,6 +109,7 @@ from .task_admin import (
 )
 from .task_admin import router as task_admin_router
 from .telegram import telegram
+from .version import DASHBOARD_VERSION
 
 
 @asynccontextmanager
@@ -158,7 +159,7 @@ async def lifespan(app):
 
 app = FastAPI(
     title="tg-signer Dashboard API",
-    version="1.1.0",
+    version=DASHBOARD_VERSION,
     description="Telegram 账号、签到、自动化与监控管理。除面板登录、健康检查外，所有接口需要 HttpOnly JWT Cookie 或 Bearer JWT。",
     lifespan=lifespan,
     docs_url=None,
