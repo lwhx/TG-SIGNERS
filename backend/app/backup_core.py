@@ -401,6 +401,25 @@ def queue_restore(data: Path, backup_id: str, secret: str) -> dict:
     }
 
 
+def cancel_queued_restore(data: Path) -> dict:
+    """Cancel ONLY a not-yet-applied restore; never interrupt boot-time swap."""
+    data = data.resolve()
+    pending = _pending_path(data)
+    if (data / ".restore-journal.json").exists():
+        raise BackupError("恢复过程已经开始，不能取消")
+    if not pending.exists():
+        raise BackupError("当前没有待恢复任务")
+    plan = json.loads(pending.read_text())
+    backup_id = _valid_id(plan["id"])
+    operation = _valid_id(plan.get("operation", backup_id))
+    stage = data / ".restore-stage" / operation
+    if stage.is_symlink():
+        raise BackupError("恢复暂存目录异常")
+    shutil.rmtree(stage, ignore_errors=True)
+    pending.unlink()
+    return {"cancelled": True, "id": backup_id}
+
+
 def restore_status(data: Path) -> dict:
     pending = _pending_path(data)
     last = data / ".restore-last.json"
