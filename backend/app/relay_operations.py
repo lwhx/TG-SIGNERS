@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from .db import Run, Session, Task
 from .engine import task_engine
@@ -66,14 +66,11 @@ def listener_snapshot():
         tasks = list(db.scalars(
             select(Task).where(Task.kind.in_(("automation", "monitor"))).order_by(Task.id.desc())
         ))
-        rows = db.execute(
-            select(Run.task_id, Run.finished_at)
+        latest = dict(db.execute(
+            select(Run.task_id, func.max(Run.finished_at))
             .where(Run.task_id.is_not(None), Run.finished_at.is_not(None))
-            .order_by(Run.finished_at.desc())
-        ).all()
-    latest = {}
-    for task_id, finished in rows:
-        latest.setdefault(task_id, finished)
+            .group_by(Run.task_id)
+        ).all())
     result = []
     for task in tasks:
         future = task_engine.running.get(task.id)
