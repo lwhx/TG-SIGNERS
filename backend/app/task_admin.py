@@ -114,7 +114,7 @@ class BatchRequest(BaseModel):
     @field_validator("group_name")
     @classmethod
     def normalize_group(cls, value):
-        return TaskInput.model_fields["group_name"].annotation and _normalize_group(value)
+        return _normalize_group(value)
 
 
 def _normalize_group(value: str) -> str:
