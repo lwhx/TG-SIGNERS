@@ -18,9 +18,9 @@ P8 Dashboard 版本 `1.2.0`，SQLite schema `3`。未明确验证新版本前不
 ## 2. 恢复（冷启动、可回退）
 
 1. 创建并下载**当前**新备份，再选择原备份，填原密码并单独确认 `RESTORE`。
-2. Dashboard 先验证并暂存所有数据在 `data/.restore-stage/<id>/`，不会热替换正在打开的 SQLite 文件和登录密钥。应用显示待恢复编号。
+2. Dashboard 先验证并暂存所有数据在 `data/.restore-stage/<operation-id>/`，不会热替换正在打开的 SQLite 文件和登录密钥。应用显示待恢复编号。
 3. 由管理员手动执行 `docker compose restart dashboard`（在当前 Compose 目录）；容器 entrypoint 降权 UID 10001 后，**先运行 `python -m app.restore_boot`，成功才启动 Uvicorn**。
-4. 启动前校验暂存哈希与完整性，复制所有待替换原文件（包括 WAL/SHM）到 `data/.restore-previous/<id>/`，写入恢复日志。逐文件原子替换数据库、配置和密钥。清除旧 SQLite 的 WAL/SHM，防止回放到新数据。
+4. 启动前校验暂存哈希与完整性，复制所有待替换原文件（包括 WAL/SHM）到 `data/.restore-previous/<operation-id>/`，写入恢复日志。逐文件原子替换数据库、配置和密钥。清除旧 SQLite 的 WAL/SHM，防止回放到新数据。
 5. 恢复完成后重新使用旧备份对应的 Dashboard 密码登录；如冷启动中断，下次启动先利用恢复日志回滚至替换前数据，防止部分数据库 + 新密钥的混搭。状态可在 UI 查看。
 6. 备份原有数据目录中的其他未包含文件**不会被删除**；备份与还原均拒绝符号链接。为减少意外数据残留，跨服务器彻底迁移优先在全新空数据目录进行。
 7. `data/.restore-previous/` 是含密钥的**明文**回退副本，与正在使用的 `data/` 一样必须严格保护（目录模式 0700），管理员确认运行正常后在停机维护窗口手动清理。
