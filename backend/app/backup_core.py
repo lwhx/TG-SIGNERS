@@ -294,6 +294,23 @@ def create_backup(data: Path, secret: str) -> dict:
     }
 
 
+def import_backup(data: Path, blob: bytes, secret: str) -> dict:
+    """Import an encrypted archive after full integrity and password checks."""
+    data = data.resolve()
+    if len(blob) > MAX_ENCRYPTED:
+        raise BackupError("上传的备份文件超过 100 MiB")
+    manifest, _ = _decode(blob, secret)
+    directory = _backup_dir(data)
+    if len(list(directory.glob("*.tgsb"))) >= MAX_BACKUPS:
+        raise BackupError("备份数量已达上限（12），请先删除旧备份")
+    name = uuid.uuid4().hex
+    _atomic_bytes(directory / f"{name}.tgsb", blob)
+    return {
+        "id": name, "created_at": manifest["created_at"],
+        "files": len(manifest["files"]), "size": len(blob),
+    }
+
+
 def backup_path(data: Path, backup_id: str) -> Path:
     file = _backup_dir(data) / (_valid_id(backup_id) + ".tgsb")
     _ensure_path(file)
