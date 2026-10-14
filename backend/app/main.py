@@ -71,9 +71,12 @@ from .maintenance import check_relay_alerts, check_relay_recovery, scheduled_cle
 from .maintenance import router as maintenance_router
 from .notifications import notify
 from .relay import RelayPreviewInput, preview_match
+from .relay_backfill import recover_backfills, stop_all_backfills
+from .relay_backfill import router as relay_backfill_router
 from .relay_full_preview import router as relay_full_preview_router
 from .relay_history import router as relay_history_router
 from .relay_operations import router as relay_operations_router
+from .relay_p7 import router as relay_p7_router
 from .relay_retry import process_retries
 from .relay_retry import router as relay_retry_router
 from .schemas import (
@@ -117,6 +120,7 @@ async def lifespan(app):
     Base.metadata.create_all(engine)
     migrate_task_groups()
     initialize_task_versions()
+    recover_backfills()
     if not get_setting("password_hash"):
         password = os.getenv("ADMIN_PASSWORD") or persistent_secret(
             "initial-password.txt", lambda: secrets.token_urlsafe(20)
@@ -149,6 +153,7 @@ async def lifespan(app):
     )
     bus.emit(f"控制台已启动 · tg-signer {upstream_version}")
     yield
+    await stop_all_backfills()
     await task_engine.shutdown()
     for key in list(auth.flows):
         await auth.cancel(key)
@@ -1197,8 +1202,10 @@ def docs():
 
 api.include_router(task_admin_router)
 api.include_router(relay_full_preview_router)
+api.include_router(relay_backfill_router)
 api.include_router(relay_history_router)
 api.include_router(relay_operations_router)
+api.include_router(relay_p7_router)
 api.include_router(relay_retry_router)
 api.include_router(maintenance_router)
 app.include_router(api)
