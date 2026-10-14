@@ -9,6 +9,7 @@ from tg_signer import __version__ as upstream_version
 from .db import DATA, Session, get_setting, set_setting
 from .schemas import PanelLogin, PasswordChange
 from .security import COOKIE, SECURE, TTL, passwords, rate_limit, token
+from .version import DASHBOARD_VERSION
 
 public_router = APIRouter()
 private_router = APIRouter()
@@ -18,7 +19,7 @@ private_router = APIRouter()
 def health():
     with Session() as db:
         db.execute(select(1))
-    return {"status": "ok", "version": "1.1.0", "tg_signer": upstream_version}
+    return {"status": "ok", "version": DASHBOARD_VERSION, "tg_signer": upstream_version}
 
 
 @public_router.post("/api/panel/login", tags=["面板鉴权"], summary="密码登录，签发 HttpOnly JWT Cookie")
