@@ -47,6 +47,19 @@ jobs:
         run: npm run typecheck
       - name: Build Dashboard
         run: npm run build
+      - name: Install Chromium for relay UI test
+        run: npx playwright install --with-deps chromium
+      - name: Test relay history filters and manual retry UX (mock API)
+        run: |
+          python3 -m http.server 8999 --bind 127.0.0.1 --directory out \
+            > /tmp/relay-ui-server.log 2>&1 &
+          for attempt in $(seq 1 20); do
+            if curl --fail --silent http://127.0.0.1:8999/ >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          npx playwright test tests/relay-history.spec.ts
 
   compose:
     runs-on: ubuntu-latest

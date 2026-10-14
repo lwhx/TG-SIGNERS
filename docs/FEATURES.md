@@ -28,6 +28,8 @@
 | 通用多来源 → 多目标转发 | 自动化与转发 → 新建自动化 → 通用消息转发模板 | `relay_message` 目标模式 forward/copy/text/extract/template，每个目标独立配置 |
 | 正则测试与捕获组 | 自动化与转发 → 消息筛选 → 测试消息匹配 | 管理员鉴权后的 `/api/relay/preview`，超时限制，显示命中与捕获组 |
 | 持久化去重与失败冷却 | `data/upstream/message_relay.sqlite3` | message/content/off；失败后冷却，收到重复消息时允许再试 |
+| 转发记录和 7 天投递统计 | 左侧「转发记录」 | 分页、状态/账号/任务筛选；基于数据库最终状态统计总量、错误类型、尝试次数 |
+| 失败投递人工重试 | 「转发记录」→ 对新版本失败行点击重试 | 账号/任务/规则/来源消息重新核验；原文哈希不符或已成功则拒绝；旧行只能查看 |
 | 115 Bot 转存示例 | 自动化与转发 → 115 链接转存 Bot 示例 | 匹配 115cdn.com 分享链接，提取后发送至现有 Bot |
 | 自定义 Python handler | 工具箱 → Python 插件 | 文件列表、代码编辑、语法校验、保存、删除；任务重启重新加载 |
 | automation 状态持久化 | data/upstream/automations/<id>/state.json | 原生 RuleStateStore，重启恢复 |
