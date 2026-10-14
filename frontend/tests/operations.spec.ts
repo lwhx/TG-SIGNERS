@@ -21,6 +21,18 @@ test("maintenance defaults off, previews and explicitly cleans, with mobile layo
       return route.fulfill({ json: [] });
     if (path === "/api/overview")
       return route.fulfill({ json: { trend: [], recent: [] } });
+    if (path === "/api/relay/retry-policy")
+      return route.fulfill({
+        json: {
+          policy: {
+            enabled: false,
+            max_attempts: 3,
+            base_delay: 60,
+            max_delay: 3600,
+            horizon_hours: 24,
+          },
+        },
+      });
     if (path === "/api/settings")
       return route.fulfill({ json: { notifications: [] } });
     if (path === "/api/maintenance/policy") {

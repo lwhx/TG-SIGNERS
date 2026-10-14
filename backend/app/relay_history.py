@@ -6,9 +6,15 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 from functools import lru_cache
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
+from tg_signer.automation.delivery_outcome import (
+    PreSendRejected,
+    configuration_digest,
+    source_snapshot_digest,
+)
 from tg_signer.automation.engine import UserAutomation
 from tg_signer.automation.message_relay import relay_message
 from tg_signer.automation.models import AutomationContext, Event
@@ -37,13 +43,16 @@ class ReplayInput(BaseModel):
 def relay_history(
     page: int = Query(1, ge=1, le=100000),
     page_size: int = Query(25, ge=1, le=100),
-    status: str | None = Query(None, pattern=r"^(sent|failed|sending)$"),
+    status: str | None = Query(None, pattern=r"^(sent|failed|sending|uncertain)$"),
     account_id: int | None = Query(None, ge=1),
     task_id: int | None = Query(None, ge=1),
 ):
     return get_ledger().history(
-        page=page, page_size=page_size, status=status,
-        account_id=account_id, task_id=task_id,
+        page=page,
+        page_size=page_size,
+        status=status,
+        account_id=account_id,
+        task_id=task_id,
     )
 
 
@@ -57,16 +66,16 @@ def relay_stats(
 
 @router.post("/retry")
 async def retry_relay(data: ReplayInput, request: Request):
-    """Retry exactly one failed delivery, never a successful/inflight row.
-
-    Existing legacy records without provenance are read-only. The current
-    task, route, filters and freshly fetched Telegram message must still
-    match the recorded failed delivery; the ledger holds no message payload.
-    """
     rate_limit(
         "relay-retry:" + (request.client.host if request.client else "local"),
-        limit=20, window=60,
+        limit=20,
+        window=60,
     )
+    return await replay_record(data)
+
+
+async def replay_record(data: ReplayInput, *, claim=None):
+    """Source-verified replay shared by manual requests and the bounded queue."""
     destination = data.destination.strip().lower()
     ledger = get_ledger()
     record = ledger.get(destination, data.fingerprint)
@@ -74,8 +83,14 @@ async def retry_relay(data: ReplayInput, request: Request):
         raise HTTPException(404, "转发记录不存在")
     if record["status"] != "failed":
         raise HTTPException(409, "只有失败的记录允许重试")
+    if record["needs_review"]:
+        raise HTTPException(409, "发送结果未确认，请先核查目标聊天")
     if not record["retryable"]:
         raise HTTPException(409, "旧记录缺少账号和规则信息，不能安全重试")
+    if claim is not None and (
+        record["action"] not in {"text", "extract", "template"} or not record["source_digest"]
+    ):
+        raise HTTPException(409, "此记录只允许人工核查重试")
     with Session() as db:
         task = db.get(Task, record["task_id"])
         account = db.get(Account, record["account_id"])
@@ -92,6 +107,8 @@ async def retry_relay(data: ReplayInput, request: Request):
         account_id = task.account_id
 
     config = AutomationConfig.model_validate(task_config)
+    if claim is not None and record["config_digest"] != configuration_digest(config):
+        raise HTTPException(409, "任务配置已改变，自动重试已停止")
     rule = next(
         (x for x in config.rules if x.id == record["rule_id"] and x.enabled),
         None,
@@ -125,9 +142,7 @@ async def retry_relay(data: ReplayInput, request: Request):
             worker = await telegram.worker(account_id, UserAutomation, task_id)
             worker.account_id = account_id
             worker.config = config
-            message = await worker.app.get_messages(
-                source_id, record["source_message"]
-            )
+            message = await worker.app.get_messages(source_id, record["source_message"])
             if (
                 message is None
                 or getattr(message, "empty", False)
@@ -136,38 +151,72 @@ async def retry_relay(data: ReplayInput, request: Request):
                 or message.id != record["source_message"]
             ):
                 raise HTTPException(409, "原始消息不可读取或已被删除，不能重试")
-            triggers = [
-                trigger
-                for trigger in rule.triggers
-                if trigger.type == "message"
-            ]
-            if not any(
-                worker._match_message_trigger(trigger, message)
-                for trigger in triggers
+            triggers = [trigger for trigger in rule.triggers if trigger.type == "message"]
+            if (
+                record["source_digest"]
+                and source_snapshot_digest(message) != record["source_digest"]
             ):
+                raise HTTPException(409, "原始消息已改变，重试已停止")
+            if not any(worker._match_message_trigger(trigger, message) for trigger in triggers):
                 raise HTTPException(409, "原始消息已不再符合来源监听条件")
             if rule.filters and not worker._match_filter(rule.filters, message):
                 raise HTTPException(409, "原始消息已不再符合当前筛选规则")
 
             event = Event(
-                type="message", chat_id=message.chat.id, message=message,
-                now=datetime.now(timezone.utc), trigger_id="manual_replay",
+                type="message",
+                chat_id=message.chat.id,
+                message=message,
+                now=datetime.now(timezone.utc),
+                trigger_id="manual_replay",
                 rule_id=rule.id,
             )
             context = AutomationContext(
                 vars={**rule.vars, **worker.state.get_rule_vars(rule.id)},
-                state=worker.state, client=worker.app,
-                logger=logging.getLogger("tg-signer"), worker=worker,
+                state=worker.state,
+                client=worker.app,
+                logger=logging.getLogger("tg-signer"),
+                worker=worker,
                 workdir=worker.workdir,
             )
             context.handler_index = handler_index
+
+            def before_send():
+                with Session() as db:
+                    current = db.get(Task, task_id)
+                    if (
+                        not current
+                        or not current.enabled
+                        or current.account_id != account_id
+                        or configuration_digest(AutomationConfig.model_validate(current.config))
+                        != configuration_digest(config)
+                    ):
+                        raise PreSendRejected("TaskChanged")
+
+            worker.relay_before_send = before_send
+            if claim is not None:
+                with Session() as db:
+                    current = db.get(Task, task_id)
+                    if (
+                        not current
+                        or not current.enabled
+                        or current.account_id != account_id
+                        or configuration_digest(AutomationConfig.model_validate(current.config))
+                        != record["config_digest"]
+                    ):
+                        raise HTTPException(409, "任务配置已改变，自动重试已停止")
             before = record["attempts"]
             await relay_message(
-                event, context, params,
+                event,
+                context,
+                params,
                 retry_ref=(
-                    destination, data.fingerprint, target_index,
-                    record["part_index"], record["payload_digest"],
+                    destination,
+                    data.fingerprint,
+                    target_index,
+                    record["part_index"],
+                    record["payload_digest"],
                 ),
+                retry_claim=claim["claim_token"] if claim is not None else None,
             )
     except HTTPException:
         raise
@@ -175,12 +224,41 @@ async def retry_relay(data: ReplayInput, request: Request):
         raise HTTPException(504, "Telegram 消息获取或转发超时") from exc
     except Exception as exc:
         # Do not disclose Telegram content, API credentials or stack traces.
-        raise HTTPException(
-            502, f"无法安全重试：{type(exc).__name__}"
-        ) from exc
+        raise HTTPException(502, f"无法安全重试：{type(exc).__name__}") from exc
     updated = ledger.get(destination, data.fingerprint)
     if not updated or updated["attempts"] == before:
-        raise HTTPException(
-            409, "原消息内容或去重标识已改变，未发送任何消息"
-        )
+        raise HTTPException(409, "原消息内容或去重标识已改变，未发送任何消息")
     return {"status": updated["status"], "entry": updated}
+
+
+class ReviewInput(ReplayInput):
+    attempt: int = Field(ge=1)
+    decision: Literal["sent", "not_sent"]
+    confirmation: Literal["checked_destination"]
+
+
+@router.post("/resolve")
+async def resolve_delivery(data: ReviewInput):
+    ledger = get_ledger()
+    destination = data.destination.strip().lower()
+    if not await asyncio.to_thread(
+        ledger.resolve, destination, data.fingerprint, data.attempt, data.decision
+    ):
+        raise HTTPException(409, "原发送仍在执行、记录已变化或租约未结束，请稍后刷新并核对目标")
+    return {"entry": ledger.get(destination, data.fingerprint)}
+
+
+class RetryControlInput(ReplayInput):
+    attempt: int = Field(ge=1)
+    paused: bool
+
+
+@router.post("/retry-control")
+async def control_retry(data: RetryControlInput):
+    ledger = get_ledger()
+    destination = data.destination.strip().lower()
+    if not await asyncio.to_thread(
+        ledger.control_retry, destination, data.fingerprint, data.attempt, data.paused
+    ):
+        raise HTTPException(409, "记录已变化、正在处理或已停止重试，请刷新后重试")
+    return {"entry": ledger.get(destination, data.fingerprint)}

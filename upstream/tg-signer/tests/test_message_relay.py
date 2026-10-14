@@ -4,6 +4,7 @@ import sqlite3
 from types import SimpleNamespace
 
 import pytest
+from pyrogram import errors
 
 from tg_signer.automation.message_relay import relay_message
 from tg_signer.automation.relay_ledger import RelayLedger
@@ -18,20 +19,24 @@ class Worker:
 
     async def send_message(self, target, text):
         if self.fail:
-            raise RuntimeError("send failed")
+            raise errors.ChatWriteForbidden()
         self.sent.append((target, text))
+        return SimpleNamespace(id=len(self.sent))
 
 
 class Client:
+    relay_single_attempt = True
     def __init__(self):
         self.forwarded = []
         self.copied = []
 
     async def forward_messages(self, target, source, message_id):
         self.forwarded.append((target, source, message_id))
+        return SimpleNamespace(id=len(self.forwarded))
 
     async def copy_message(self, target, source, message_id):
         self.copied.append((target, source, message_id))
+        return SimpleNamespace(id=len(self.copied))
 
 
 class Context:
@@ -126,7 +131,7 @@ async def test_message_dedup_allows_new_post(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_failed_delivery_retries_after_zero_cooldown(tmp_path):
+async def test_permanent_rejection_is_not_resent_by_live_duplicate(tmp_path):
     ctx = Context(tmp_path)
     ctx.worker.fail = True
     params = {
@@ -137,11 +142,11 @@ async def test_failed_delivery_retries_after_zero_cooldown(tmp_path):
     assert await relay_message(event(), ctx, params) == "stop"
     ctx.worker.fail = False
     assert await relay_message(event(), ctx, params) == "continue"
-    assert len(ctx.worker.sent) == 1
+    assert len(ctx.worker.sent) == 0
     with sqlite3.connect(tmp_path / "message_relay.sqlite3") as db:
         assert db.execute(
             "SELECT status, attempts FROM relay_deliveries"
-        ).fetchone() == ("sent", 2)
+        ).fetchone() == ("failed", 1)
 
 
 @pytest.mark.asyncio

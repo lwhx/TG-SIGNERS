@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from pyrogram import errors
 from tg_signer import core
 from tg_signer.ai_tools import AITools
+from tg_signer.automation.delivery_outcome import relay_attempt, relay_rpc_state
 
 from .auth import disconnect
 from .db import DATA, Account, Session, get_setting, now
@@ -16,6 +17,22 @@ from .security import decrypt
 
 
 class HeadlessClient(core.Client):
+    relay_single_attempt = True
+
+    async def invoke(self, query, *args, **kwargs):
+        if relay_attempt.get():
+            kwargs.update(retries=1, sleep_threshold=0)
+        result = await super().invoke(query, *args, **kwargs)
+        state = relay_rpc_state.get()
+        if state is not None and getattr(query, "QUALNAME", "").rsplit(".", 1)[-1] in {
+            "SendMessage",
+            "SendMedia",
+            "SendMultiMedia",
+            "ForwardMessages",
+        }:
+            state["accepted"] = True
+        return result
+
     async def start(self):
         if not self.is_connected:
             authorized = await self.connect()

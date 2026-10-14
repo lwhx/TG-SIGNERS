@@ -253,3 +253,8 @@ HANDLERS = {"echo": echo}
 # Dashboard relay retention and alerts
 
 Dashboard users can configure opt-in history retention and deduplicated relay alerts under system settings. Successful delivery deduplication survives cleanup; CLI configurations and check-in history are unaffected. See [P3 operations](../../../docs/P3-OPERATIONS.md).
+
+
+## Dashboard relay P4
+
+Dashboard 扩展 relay_message：P4 起普通重复事件不重发失败。超时/断网/取消转待核查，管理员核对目标后确认；未送达只解锁人工重试。自动重试默认关闭，仅 text/extract/template 明确临时拒绝，来源或配置变化即停止；forward/copy 仅人工处理。CLI 客户端没有 Dashboard 单次 SDK 限制时，异常保守归为待核查。详见 [P4](../../../docs/P4-RELIABILITY.md)。

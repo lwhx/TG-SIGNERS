@@ -13,6 +13,7 @@ import { api, post } from "@/lib/api";
 import { ActionButton, Field } from "./common";
 import { Button } from "./ui/button";
 import { Maintenance } from "./maintenance";
+import { RelayRecoverySettings } from "./relay-recovery-settings";
 export function Settings() {
   const [form, setForm] = useState<any>(null);
   const [notifications, setNotifications] = useState("[]");
@@ -50,6 +51,7 @@ export function Settings() {
     <div className="grid gap-6 xl:grid-cols-[1fr_300px]">
       <div className="space-y-6">
         <Maintenance />
+        <RelayRecoverySettings />
         <section className="card p-6">
           <h2 className="mb-5 flex items-center gap-2 font-semibold">
             <Globe2 size={19} className="text-primary" />

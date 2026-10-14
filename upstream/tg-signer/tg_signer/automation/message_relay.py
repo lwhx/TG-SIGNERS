@@ -6,14 +6,22 @@ destinations, content extraction, templates, and deduplication policies.
 
 from __future__ import annotations
 
+import asyncio
 from functools import lru_cache
 from itertools import islice
-from secrets import token_hex
-
-import regex
 from pathlib import Path
+from secrets import token_hex
 from typing import TYPE_CHECKING, Any
 
+import regex
+
+from .delivery_outcome import (
+    classify_failure,
+    configuration_digest,
+    relay_attempt,
+    relay_rpc_state,
+    source_snapshot_digest,
+)
 from .relay_ledger import RelayLedger
 
 if TYPE_CHECKING:
@@ -55,7 +63,9 @@ def _content_for_target(
         flags = regex.IGNORECASE if target.get("ignore_case", True) else 0
         if mode == "extract" and target.get("all_matches", False):
             # Bound both regex CPU time and the number of extracted matches.
-            matches = list(islice(regex.finditer(pattern, text, flags=flags, timeout=0.2), 20))
+            matches = list(
+                islice(regex.finditer(pattern, text, flags=flags, timeout=0.2), 20)
+            )
         else:
             match = regex.search(pattern, text, flags=flags, timeout=0.2)
             matches = [match] if match else []
@@ -105,11 +115,21 @@ def _fingerprint(
         getattr(message, "media", None)
         or any(
             getattr(message, key, None)
-            for key in ("photo", "video", "document", "audio", "voice", "animation", "sticker")
+            for key in (
+                "photo",
+                "video",
+                "document",
+                "audio",
+                "voice",
+                "animation",
+                "sticker",
+            )
         )
     )
-    if policy == "content" and value and not (
-        mode in {"forward", "copy"} and has_media
+    if (
+        policy == "content"
+        and value
+        and not (mode in {"forward", "copy"} and has_media)
     ):
         identity = f"{mode}:content:{value}"
     else:
@@ -124,6 +144,7 @@ async def relay_message(
     params: dict[str, Any],
     *,
     retry_ref: tuple[str, str, int, int, str] | None = None,
+    retry_claim: str | None = None,
 ) -> str:
     """Relay to up to 25 targets using forward/copy/text/extract/template.
 
@@ -165,7 +186,9 @@ async def relay_message(
             failures = True
             continue
         if str(chat_id).strip().lower() == str(event.chat_id).strip().lower():
-            ctx.log("relay_message: source and destination are the same", level="WARNING")
+            ctx.log(
+                "relay_message: source and destination are the same", level="WARNING"
+            )
             failures = True
             continue
         try:
@@ -173,7 +196,14 @@ async def relay_message(
             texts = _content_for_target(normalized, event.message, event, ctx)
             retry_after = max(0, int(target.get("retry_after_seconds", 600)))
             lease = max(30, int(target.get("lease_seconds", 300)))
-        except (TypeError, ValueError, KeyError, IndexError, regex.error, TimeoutError) as exc:
+        except (
+            TypeError,
+            ValueError,
+            KeyError,
+            IndexError,
+            regex.error,
+            TimeoutError,
+        ) as exc:
             ctx.log(
                 f"relay_message: invalid rule ({type(exc).__name__})",
                 level="ERROR",
@@ -196,13 +226,17 @@ async def relay_message(
                 ledger = _get_ledger(str(ctx.workdir))
             # Hash the exact text used to send, never persist its plaintext.
             payload_digest = RelayLedger.hash_value(
-                mode + ":" + (
-                    _message_text(event.message)
-                    if mode in {"forward", "copy"} else text
+                mode
+                + ":"
+                + (
+                    source_snapshot_digest(event.message)
+                    if mode in {"forward", "copy"}
+                    else text
                 )
             )
             fingerprint = (
-                token_hex(32) if dedup == "off" and retry_ref is None
+                token_hex(32)
+                if dedup == "off" and retry_ref is None
                 else _fingerprint(mode, dedup, event, event.message, text, index)
             )
             if retry_ref is not None:
@@ -219,45 +253,131 @@ async def relay_message(
             task_name = str(getattr(worker, "task_name", ""))
             task_id = int(task_name) if task_name.isdecimal() else None
             account_id = getattr(worker, "account_id", None)
-            reason, attempt = ledger.reserve(
-                destination, fingerprint, mode, str(event.chat_id),
-                getattr(event.message, "id", None), retry_after, lease,
-                force_failed=retry_ref is not None,
-                account_id=account_id, task_id=task_id, rule_id=event.rule_id,
-                handler_index=getattr(ctx, "handler_index", None),
-                target_index=target_index, part_index=index,
-                dedup=dedup, payload_digest=payload_digest,
-            )
-            if reason != "reserved":
+            with ledger.active_delivery(destination, fingerprint) as active:
+                if not active:
+                    continue
+                reason, attempt = ledger.reserve(
+                    destination,
+                    fingerprint,
+                    mode,
+                    str(event.chat_id),
+                    getattr(event.message, "id", None),
+                    retry_after,
+                    lease,
+                    force_failed=retry_ref is not None,
+                    account_id=account_id,
+                    task_id=task_id,
+                    rule_id=event.rule_id,
+                    handler_index=getattr(ctx, "handler_index", None),
+                    target_index=target_index,
+                    part_index=index,
+                    dedup=dedup,
+                    payload_digest=payload_digest,
+                    config_digest=configuration_digest(
+                        getattr(worker, "config", params)
+                    ),
+                    source_digest=source_snapshot_digest(event.message),
+                    retry_claim=retry_claim,
+                )
+                if reason != "reserved":
+                    ctx.log(
+                        f"relay_message: skipped {reason} for {destination}",
+                        level="INFO",
+                    )
+                    continue
+                rpc_state = {"accepted": False}
+                try:
+
+                    async def send(
+                        mode=mode, chat_id=chat_id, text=text, rpc_state=rpc_state
+                    ):
+                        guard = getattr(ctx.worker, "relay_before_send", None)
+                        if guard:
+                            guard()
+                        token = relay_attempt.set(True)
+                        state_token = relay_rpc_state.set(rpc_state)
+                        try:
+                            if mode == "forward":
+                                return await ctx.client.forward_messages(
+                                    chat_id, event.chat_id, event.message.id
+                                )
+                            if mode == "copy":
+                                copy = getattr(event.message, "copy", None)
+                                if copy:
+                                    return await copy(chat_id)
+                                return await ctx.client.copy_message(
+                                    chat_id, event.chat_id, event.message.id
+                                )
+                            sender = (
+                                getattr(ctx.client, "send_message", None)
+                                or ctx.worker.send_message
+                            )
+                            return await sender(chat_id, text)
+                        finally:
+                            relay_attempt.reset(token)
+                            relay_rpc_state.reset(state_token)
+
+                    wrapper = getattr(ctx.worker, "_call_telegram_api", None)
+                    call = (
+                        wrapper("relay." + mode, send, retry_on_floodwait=False)
+                        if wrapper
+                        else send()
+                    )
+                    result = await asyncio.wait_for(call, timeout=90)
+                    # A response without a message identifier cannot prove delivery.
+                    messages = result if isinstance(result, list) else [result]
+                    message_id = next(
+                        (
+                            getattr(m, "id", None)
+                            for m in messages
+                            if getattr(m, "id", None)
+                        ),
+                        None,
+                    )
+                    if message_id is None:
+                        raise RuntimeError("UnconfirmedTelegramResponse")
+                except asyncio.CancelledError:
+                    ledger.finish(
+                        destination,
+                        fingerprint,
+                        attempt,
+                        False,
+                        "CancelledSend",
+                        failure_kind="unknown",
+                    )
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    failure_kind, wait = classify_failure(
+                        exc,
+                        single_attempt=bool(
+                            getattr(ctx.client, "relay_single_attempt", False)
+                        )
+                        and not rpc_state["accepted"],
+                    )
+                    ledger.finish(
+                        destination,
+                        fingerprint,
+                        attempt,
+                        False,
+                        type(exc).__name__,
+                        failure_kind=failure_kind,
+                        retry_after_seconds=wait,
+                    )
+                    ctx.log(
+                        f"relay_message: Telegram delivery failed ({type(exc).__name__})",
+                        level="ERROR",
+                    )
+                    failures = True
+                    continue
+                ledger.finish(
+                    destination,
+                    fingerprint,
+                    attempt,
+                    True,
+                    destination_message=message_id,
+                )
                 ctx.log(
-                    f"relay_message: skipped {reason} for {destination}",
+                    f"relay_message: delivered to {destination} via {mode}",
                     level="INFO",
                 )
-                continue
-            try:
-                if mode == "forward":
-                    await ctx.client.forward_messages(
-                        chat_id, event.chat_id, event.message.id
-                    )
-                elif mode == "copy":
-                    await ctx.client.copy_message(
-                        chat_id, event.chat_id, event.message.id
-                    )
-                else:
-                    await ctx.worker.send_message(chat_id, text)
-            except Exception as exc:  # noqa: BLE001
-                ledger.finish(
-                    destination, fingerprint, attempt, False, type(exc).__name__
-                )
-                ctx.log(
-                    f"relay_message: Telegram delivery failed ({type(exc).__name__})",
-                    level="ERROR",
-                )
-                failures = True
-                continue
-            ledger.finish(destination, fingerprint, attempt, True)
-            ctx.log(
-                f"relay_message: delivered to {destination} via {mode}",
-                level="INFO",
-            )
     return "stop" if failures else "continue"

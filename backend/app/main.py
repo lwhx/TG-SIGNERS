@@ -71,6 +71,8 @@ from .maintenance import router as maintenance_router
 from .notifications import notify
 from .relay import RelayPreviewInput, preview_match
 from .relay_history import router as relay_history_router
+from .relay_retry import process_retries
+from .relay_retry import router as relay_retry_router
 from .schemas import (
     AccountUpdate,
     Check2FA,
@@ -113,6 +115,8 @@ async def lifespan(app):
     logging.getLogger("tg-signer").addHandler(bridge)
     logging.getLogger("tg-signer").setLevel(logging.INFO)
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    from .relay_history import get_ledger
+    await asyncio.to_thread(lambda: get_ledger().recover_stale(all_sending=True))
     await task_engine.start()
     task_engine.scheduler.add_job(auth.cleanup, "interval", seconds=30, id="auth-cleanup")
     task_engine.scheduler.add_job(
@@ -123,6 +127,9 @@ async def lifespan(app):
     )
     task_engine.scheduler.add_job(
         check_relay_alerts, "interval", minutes=1, id="relay-alerts", max_instances=1, coalesce=True
+    )
+    task_engine.scheduler.add_job(
+        process_retries, "interval", seconds=30, id="relay-retries", max_instances=1, coalesce=True
     )
     bus.emit(f"控制台已启动 · tg-signer {upstream_version}")
     yield
@@ -1153,6 +1160,7 @@ def docs():
 
 
 api.include_router(relay_history_router)
+api.include_router(relay_retry_router)
 api.include_router(maintenance_router)
 app.include_router(api)
 static = Path(os.getenv("STATIC_DIR", "frontend/out"))
