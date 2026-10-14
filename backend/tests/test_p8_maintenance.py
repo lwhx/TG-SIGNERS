@@ -99,10 +99,14 @@ def test_import_verify_stage_and_cold_restore_with_rollback_snapshot(tmp_path, m
     assert result["status"] == "completed"
     assert read_name(data) == "original"
     assert (data / "jwt.key").read_text() == "jwt-should-be-private"
-    assert (data / ".restore-previous" / imported["id"] / "jwt.key").read_text() == "changed-key"
+    assert (data / ".restore-previous" / queued["operation"] / "jwt.key").read_text() == "changed-key"
     assert restore_status(data)["last"]["status"] == "completed"
     assert restore_status(data)["pending"] is None
     assert apply_pending_restore(data) is None
+    # Same encrypted backup can be restored again with a new operation id.
+    again = queue_restore(data, imported["id"], PASSWORD)
+    assert again["operation"] != queued["operation"]
+    assert apply_pending_restore(data)["status"] == "completed"
 
 
 def test_cold_restore_recovers_interrupted_multi_file_swap(tmp_path):
