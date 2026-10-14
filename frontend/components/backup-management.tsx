@@ -19,6 +19,7 @@ export function BackupManagement() {
   const [items,setItems] = useState<Backup[]>([]);
   const [state,setState] = useState<State>(empty);
   const [password,setPassword] = useState("");
+  const [upload,setUpload] = useState<File|null>(null);
   const [busy,setBusy] = useState("");
   const [error,setError] = useState("");
 
@@ -57,6 +58,22 @@ export function BackupManagement() {
       await post("/maintenance/backups",{passphrase:password});
       setPassword("");
       toast.success("已生成加密备份；建议下载至安全的离线存储");
+    });
+  };
+  const importArchive = () => {
+    if(!checkPassphrase() || !upload)return;
+    if(upload.size>100*1048576) {
+      toast.error("备份文件最大不能超过 100 MiB");
+      return;
+    }
+    void action("import",async()=>{
+      const body=new FormData();
+      body.set("passphrase",password);
+      body.set("file",upload);
+      await api("/maintenance/backups/import",{method:"POST",body});
+      setUpload(null);
+      setPassword("");
+      toast.success("加密备份已验证并导入本地，可再选择暂存恢复");
     });
   };
   const verify = (id:string) => {
@@ -107,6 +124,20 @@ export function BackupManagement() {
       <Button type="button" size="sm" disabled={Boolean(busy)||password.length<16} onClick={create}>
         <HardDriveDownload size={15}/>{busy==="create"?"正在生成…":"创建加密备份"}
       </Button>
+    </div>
+    <div className="grid gap-3 rounded-lg border border-line p-3 sm:grid-cols-[1fr_auto] sm:items-end">
+      <label className="text-xs text-muted">从其他服务器上传加密备份包 (.tgsb)
+        <input className="mt-2 block w-full text-xs" type="file" accept=".tgsb,application/octet-stream"
+          aria-label="上传加密备份包"
+          onChange={event=>setUpload(event.target.files?.[0]||null)}/>
+      </label>
+      <Button type="button" size="sm" variant="outline"
+        disabled={!upload||Boolean(busy)||password.length<16} onClick={importArchive}>
+        导入并验证
+      </Button>
+      <p className="text-xs leading-5 text-muted sm:col-span-2">
+        请使用创建该备份时的原密码。文件上传后先进行认证解密、哈希和 SQLite 完整性检查，不会直接覆盖当前服务。
+      </p>
     </div>
     {error && <p role="alert" className="text-xs text-red-600">{error}</p>}
     {state.pending && <div className="rounded-lg border border-amber-300 p-3 text-xs leading-6">
