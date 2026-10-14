@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
+from functools import lru_cache
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -21,6 +22,7 @@ from .telegram import telegram
 router = APIRouter(prefix="/relay", tags=["转发历史与重试"])
 
 
+@lru_cache(maxsize=1)
 def get_ledger() -> RelayLedger:
     # Uses the same persistent workdir as UserAutomation in the Dashboard.
     return RelayLedger(DATA / "upstream")

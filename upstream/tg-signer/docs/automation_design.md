@@ -264,3 +264,6 @@ HANDLERS = {"my_hello": hello}
 ```sh
 python -m pytest -vv tests/test_automation_state.py tests/test_automation_handlers.py tests/test_automation_engine.py
 ```
+# Dashboard P3 relay maintenance
+
+The embedded RelayLedger supports opt-in bounded terminal history cleanup. Successful dedup keys and history deletion share one transaction; sending rows are excluded. Failure sequence and alert cursor/cooldown state are persisted in the same SQLite database. Dashboard performs notification delivery outside message workers. See [P3 operations](../../../docs/P3-OPERATIONS.md).

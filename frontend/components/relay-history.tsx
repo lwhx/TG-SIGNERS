@@ -22,6 +22,7 @@ import {
 import { toast } from "sonner";
 
 import { Account, api, post, Task } from "@/lib/api";
+import { pollVisible } from "@/lib/polling";
 import { Button } from "./ui/button";
 
 type Status = "sent" | "failed" | "sending";
@@ -99,12 +100,15 @@ export function RelayHistory({ accounts, tasks }: { accounts: Account[]; tasks: 
   const [accountId, setAccountId] = useState("");
   const [taskId, setTaskId] = useState("");
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [reload, setReload] = useState(0);
   const [history, setHistory] = useState<History>(emptyHistory);
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
+  const [statsError, setStatsError] = useState("");
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const selectedTasks = useMemo(
     () => tasks.filter(
@@ -115,46 +119,50 @@ export function RelayHistory({ accounts, tasks }: { accounts: Account[]; tasks: 
   );
 
   useEffect(() => {
-    let alive = true;
-    const load = async () => {
+    return pollVisible(async (signal) => {
+      setLoading(true);
       const common = new URLSearchParams();
       if (accountId) common.set("account_id", accountId);
       if (taskId) common.set("task_id", taskId);
       const filters = new URLSearchParams(common);
       filters.set("page", String(page));
-      filters.set("page_size", "20");
+      filters.set("page_size", String(pageSize));
       if (status) filters.set("status", status);
       try {
-        const [hist, stat] = await Promise.all([
-          api<History>("/relay/history?" + filters.toString()),
-          api<Stats>("/relay/stats?" + common.toString()),
-        ]);
-        if (alive) {
+        const hist = await api<History>("/relay/history?" + filters.toString(), { signal });
+        if (!signal.aborted) {
+          const pages = Math.max(1, Math.ceil(hist.total / hist.page_size));
+          if (page > pages) { setPage(pages); return; }
           setHistory(hist);
-          setStats(stat);
+          setLastUpdated(new Date());
           setError("");
         }
       } catch (err) {
-        if (alive) setError((err as Error).message);
+        if (!signal.aborted) setError((err as Error).message);
       } finally {
-        if (alive) setLoading(false);
+        if (!signal.aborted) setLoading(false);
       }
-    };
-    setLoading(true);
-    void load();
-    const timer = setInterval(() => void load(), 20000);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, [status, accountId, taskId, page, reload]);
+    }, 20000);
+  }, [status, accountId, taskId, page, pageSize, reload]);
+
+  useEffect(() => pollVisible(async (signal) => {
+    const filters = new URLSearchParams();
+    if (accountId) filters.set("account_id", accountId);
+    if (taskId) filters.set("task_id", taskId);
+    try {
+      const result = await api<Stats>("/relay/stats?" + filters, { signal });
+      if (!signal.aborted) { setStats(result); setStatsError(""); }
+    } catch (err) {
+      if (!signal.aborted) setStatsError((err as Error).message);
+    }
+  }, 60000), [accountId, taskId, reload]);
 
   const requestRetry = async (entry: Entry) => {
     if (!entry.retryable || busy) return;
     if (!window.confirm(
-      `确定重新发送到 ${entry.destination} 吗？\\n\\n系统会重新读取原消息并核对当前规则。已成功发送或原消息已变化的记录不会重发。`
+      `确定重新发送到 ${entry.destination} 吗？\n\n系统会重新读取原消息并核对当前规则。已成功发送或原消息已变化的记录不会重发。`
     )) return;
-    const key = entry.fingerprint + entry.destination;
+    const key = entry.destination + entry.fingerprint;
     setBusy(key);
     try {
       const result = await post<{ status: Status }>("/relay/retry", {
@@ -183,8 +191,12 @@ export function RelayHistory({ accounts, tasks }: { accounts: Account[]; tasks: 
 
   return (
     <div className="space-y-5">
+      <p role="status" className="text-xs text-muted">
+        {loading ? "正在同步记录…" : lastUpdated ? `记录更新于 ${lastUpdated.toLocaleTimeString("zh-CN", { hour12: false })}` : "等待同步…"} · 记录每 20 秒、统计每分钟刷新 · 后台标签页暂停
+      </p>
+      {statsError && <p role="alert" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">统计暂未更新：{statsError}</p>}
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <StatCard title="总投递记录" value={stats?.total ?? "—"} icon={Send} note="包含历史和已重试记录" />
+        <StatCard title="总投递记录" value={stats?.total ?? "—"} icon={Send} note="按保留的历史统计，已清理记录不计入" />
         <StatCard title="成功投递" value={stats?.sent ?? "—"} icon={CheckCircle2} />
         <StatCard title="失败投递" value={stats?.failed ?? "—"} icon={AlertCircle} />
         <StatCard title="发送中" value={stats?.sending ?? "—"} icon={Clock3} note="中断的发送可能暂时显示为发送中" />
@@ -249,6 +261,7 @@ export function RelayHistory({ accounts, tasks }: { accounts: Account[]; tasks: 
               {selectedTasks.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
             </select>
           </label>
+          <Button variant="outline" size="sm" className="self-end" disabled={!status && !accountId && !taskId} onClick={() => { setStatus(""); setAccountId(""); setTaskId(""); setPage(1); }}>重置筛选</Button>
         </div>
         {error && <p className="mx-5 mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
         <div className="overflow-x-auto">
@@ -309,7 +322,8 @@ export function RelayHistory({ accounts, tasks }: { accounts: Account[]; tasks: 
           </table>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-5 py-4 text-xs text-muted">
-          <span>第 {page} / {totalPages} 页 · 每页 20 条</span>
+          <span>第 {page} / {totalPages} 页</span>
+          <label className="flex items-center gap-2">每页条数<select className="!w-20" value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setPage(1); }}>{[20, 50, 100].map(size => <option key={size} value={size}>{size}</option>)}</select></label>
           <div className="flex gap-2">
             <Button size="sm" variant="outline" disabled={page <= 1 || loading} onClick={() => setPage((x) => Math.max(1, x - 1))}>
               上一页

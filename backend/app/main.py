@@ -34,7 +34,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 from pyrogram import Client, errors
 from pyrogram.enums import ChatMembersFilter
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
+from sqlalchemy.orm import defer
 from tg_signer import __version__ as upstream_version
 from tg_signer.automation.handlers import list_handlers, register_builtin_handlers
 from tg_signer.config import (
@@ -65,6 +66,8 @@ from .db import (
 )
 from .engine import task_engine
 from .events import LogBridge, bus
+from .maintenance import check_relay_alerts, scheduled_cleanup
+from .maintenance import router as maintenance_router
 from .notifications import notify
 from .relay import RelayPreviewInput, preview_match
 from .relay_history import router as relay_history_router
@@ -114,6 +117,12 @@ async def lifespan(app):
     task_engine.scheduler.add_job(auth.cleanup, "interval", seconds=30, id="auth-cleanup")
     task_engine.scheduler.add_job(
         check_sessions, "interval", minutes=5, id="session-check", max_instances=1, coalesce=True
+    )
+    task_engine.scheduler.add_job(
+        scheduled_cleanup, "interval", hours=1, id="history-cleanup", max_instances=1, coalesce=True
+    )
+    task_engine.scheduler.add_job(
+        check_relay_alerts, "interval", minutes=1, id="relay-alerts", max_instances=1, coalesce=True
     )
     bus.emit(f"控制台已启动 · tg-signer {upstream_version}")
     yield
@@ -702,7 +711,6 @@ def overview():
         .isoformat()
     )
     with Session() as db:
-        rows = db.execute(select(Run.started_at, Run.status).where(Run.started_at >= start)).all()
         trend = {
             str(today - timedelta(days=6 - i)): {
                 "date": str(today - timedelta(days=6 - i)),
@@ -712,10 +720,22 @@ def overview():
             }
             for i in range(7)
         }
-        for date, status in rows:
-            key = str(datetime.fromisoformat(date).astimezone(tz).date())
+        boundaries = [
+            (datetime.combine(datetime.fromisoformat(day).date(), datetime.min.time(), tzinfo=tz)
+             .astimezone(timezone.utc).isoformat(), day)
+            for day in reversed(trend)
+        ]
+        day_key = case(*[(Run.started_at >= boundary, day) for boundary, day in boundaries])
+        rows = db.execute(
+            select(day_key, Run.status, func.count(Run.id))
+            .where(Run.started_at >= start).group_by(day_key, Run.status)
+        ).all()
+        today_runs = 0
+        for key, status, count in rows:
+            if key == str(today):
+                today_runs += count
             if key in trend and status in trend[key]:
-                trend[key][status] += 1
+                trend[key][status] += count
         day = trend[str(today)]
         verified = day["success"] + day["failed"]
         next_times = [
@@ -730,13 +750,13 @@ def overview():
             "accounts": db.scalar(select(func.count(Account.id))),
             "active_tasks": db.scalar(select(func.count(Task.id)).where(Task.enabled.is_(True))),
             "success_rate": round(day["success"] / verified * 100, 1) if verified else None,
-            "today_runs": sum(
-                1 for date, _ in rows if datetime.fromisoformat(date).astimezone(tz).date() == today
-            ),
+            "today_runs": today_runs,
             "next_run": min(next_times).isoformat() if next_times else None,
             "trend": list(trend.values()),
             "recent": [
-                run_dict(r) for r in db.scalars(select(Run).order_by(Run.id.desc()).limit(6))
+                {c.name: getattr(r, c.name) for c in Run.__table__.columns if c.name != "response"}
+                for r in db.scalars(select(Run).options(defer(Run.response))
+                                    .order_by(Run.id.desc()).limit(6))
             ],
             "timezone": str(tz),
             "running": len(task_engine.running),
@@ -1133,6 +1153,7 @@ def docs():
 
 
 api.include_router(relay_history_router)
+api.include_router(maintenance_router)
 app.include_router(api)
 static = Path(os.getenv("STATIC_DIR", "frontend/out"))
 if static.is_dir():
