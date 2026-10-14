@@ -95,13 +95,13 @@ class Automation(AuditMixin, AIMixin, UserAutomation):
         """Check only replies sent by a Bot; never infer success from chat timing."""
         sender = getattr(message, "from_user", None)
         reply = getattr(message, "reply_to_message", None)
+        reply_id = getattr(reply, "id", None) or getattr(message, "reply_to_message_id", None)
         chat = getattr(message, "chat", None)
         if (
             not sender
             or not getattr(sender, "is_bot", False)
             or getattr(message, "outgoing", False)
-            or not reply
-            or not getattr(reply, "id", None)
+            or not reply_id
             or not chat
             or not getattr(chat, "id", None)
             or not getattr(self, "account_id", None)
@@ -114,7 +114,7 @@ class Automation(AuditMixin, AIMixin, UserAutomation):
                 get_ledger().observe_bot_reply,
                 account_id=self.account_id,
                 bot_chat=chat.id,
-                reply_to_message=reply.id,
+                reply_to_message=reply_id,
                 bot_message=message.id,
                 text=str(message.text or message.caption or "")[:8000],
             )
