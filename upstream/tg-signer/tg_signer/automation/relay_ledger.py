@@ -47,6 +47,8 @@ class RelayLedger(RelayRecoveryMixin, BotResultMixin):
         "resolution": "TEXT",
         "resolved_at": "INTEGER",
         "destination_message": "INTEGER",
+        "media_count": "INTEGER NOT NULL DEFAULT 1",
+        "media_group_key": "TEXT",
     }
     _STATUSES = frozenset({"sent", "failed", "sending", "uncertain"})
 
@@ -195,6 +197,8 @@ class RelayLedger(RelayRecoveryMixin, BotResultMixin):
         config_digest: str | None = None,
         source_digest: str | None = None,
         retry_claim: str | None = None,
+        media_count: int = 1,
+        media_group_key: str | None = None,
     ) -> tuple[str, int | None]:
         """Return (reserved, attempt) or (skip_reason, None).
 
@@ -296,13 +300,15 @@ class RelayLedger(RelayRecoveryMixin, BotResultMixin):
                     ),
                 )
                 db.execute(
-                    "UPDATE relay_deliveries SET lease_until=?,retry_floor=?,config_digest=?,source_digest=? "
-                    "WHERE destination=? AND fingerprint=?",
+                    "UPDATE relay_deliveries SET lease_until=?,retry_floor=?,config_digest=?,source_digest=?,"
+                    "media_count=?,media_group_key=? WHERE destination=? AND fingerprint=?",
                     (
                         stamp + max(120, lease_seconds),
                         retry_after_seconds,
                         config_digest,
                         source_digest,
+                        max(1, min(10, media_count)),
+                        media_group_key,
                         destination,
                         fingerprint,
                     ),
