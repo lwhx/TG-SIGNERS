@@ -16,7 +16,15 @@ type RelayTarget = {
   all_matches?: boolean;
   template?: string;
   retry_after_seconds?: number;
+  album_mode?: "single" | "album";
+  track_bot_result?: boolean;
+  bot_success_pattern?: string;
+  bot_failure_pattern?: string;
+  bot_timeout_minutes?: number;
 };
+
+const BOT_SUCCESS_DEFAULT = String.raw`(?:转存|保存|存储|任务).{0,24}(?:成功|完成)|(?:success|saved|completed)`;
+const BOT_FAILURE_DEFAULT = String.raw`(?:转存|保存|存储|任务).{0,24}(?:失败|错误)|(?:failed|error)`;
 
 const MODE_LABELS: Record<RelayTarget["mode"], string> = {
   forward: "原样转发（保留来源）",
@@ -189,6 +197,72 @@ export function RelayTargetsEditor({
                 onChange={(event) => editTarget(index, { retry_after_seconds: Math.max(0, Number(event.target.value)) })}
               />
             </Field>
+          </div>
+          {(target.mode === "forward" || target.mode === "copy") && (
+            <div className="mt-3 space-y-2">
+              <Field label="媒体组处理方式">
+                <select
+                  value={target.album_mode || "single"}
+                  onChange={event => editTarget(index, {album_mode: event.target.value as RelayTarget["album_mode"]})}
+                >
+                  <option value="single">逐条转发（保持现有行为）</option>
+                  <option value="album">整组发送相册（2–10 个媒体，整组去重）</option>
+                </select>
+              </Field>
+              {target.album_mode === "album" && (
+                <p className="text-xs leading-5 text-muted">
+                  媒体组会通过 Telegram API 读取完整相册后一次发送；结果不确定时禁止自动重发。
+                  即使关闭普通消息去重，相册仍强制按整组去重。
+                </p>
+              )}
+            </div>
+          )}
+          <div className="mt-3 space-y-3 border-t border-line pt-3">
+            <label className="flex items-center gap-2 text-sm font-medium">
+              <input
+                type="checkbox"
+                className="!w-4"
+                checked={Boolean(target.track_bot_result)}
+                onChange={event => editTarget(index, {
+                  track_bot_result: event.target.checked,
+                  bot_success_pattern: target.bot_success_pattern || BOT_SUCCESS_DEFAULT,
+                  bot_failure_pattern: target.bot_failure_pattern || BOT_FAILURE_DEFAULT,
+                  bot_timeout_minutes: target.bot_timeout_minutes || 120,
+                })}
+              />
+              追踪目标 Bot 的处理结果（适合 115 转存 Bot）
+            </label>
+            {target.track_bot_result && (
+              <div className="space-y-3">
+                <p className="text-xs leading-5 text-muted">
+                  仅将目标 Bot 在同一会话中对本条已发送消息的明确回复关联到转存结果。
+                  不根据时间或聊天顺序猜测；无回复关联的结果保持待确认。仅保存回执状态和哈希，不保存 Bot 回复正文。
+                </p>
+                <Field label="转存成功正则">
+                  <input
+                    maxLength={500}
+                    value={target.bot_success_pattern || ""}
+                    onChange={event => editTarget(index,{bot_success_pattern:event.target.value})}
+                  />
+                </Field>
+                <Field label="转存失败正则">
+                  <input
+                    maxLength={500}
+                    value={target.bot_failure_pattern || ""}
+                    onChange={event => editTarget(index,{bot_failure_pattern:event.target.value})}
+                  />
+                </Field>
+                <Field label="回执等待时限（分钟）">
+                  <input
+                    type="number"
+                    min={1}
+                    max={10080}
+                    value={target.bot_timeout_minutes ?? 120}
+                    onChange={event => editTarget(index,{bot_timeout_minutes:Number(event.target.value)})}
+                  />
+                </Field>
+              </div>
+            )}
           </div>
           {(target.mode === "extract" || target.mode === "template") && (
             <div className="mt-3 space-y-3">

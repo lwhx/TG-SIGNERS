@@ -15,10 +15,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator
 
+from .bot_results import BotResultMixin
 from .relay_recovery import RelayRecoveryMixin
 
 
-class RelayLedger(RelayRecoveryMixin):
+class RelayLedger(RelayRecoveryMixin, BotResultMixin):
     """Idempotency reservations, delivery history, stats and safe replay leases."""
 
     _EXTRA_COLUMNS = {
@@ -46,6 +47,8 @@ class RelayLedger(RelayRecoveryMixin):
         "resolution": "TEXT",
         "resolved_at": "INTEGER",
         "destination_message": "INTEGER",
+        "media_count": "INTEGER NOT NULL DEFAULT 1",
+        "media_group_key": "TEXT",
     }
     _STATUSES = frozenset({"sent", "failed", "sending", "uncertain"})
 
@@ -116,6 +119,7 @@ class RelayLedger(RelayRecoveryMixin):
                 "last_status TEXT NOT NULL DEFAULT 'idle')"
             )
             db.execute("INSERT OR IGNORE INTO relay_alert_state(id) VALUES(1)")
+            self._init_bot_results(db)
             db.execute(
                 "CREATE TABLE IF NOT EXISTS relay_reviews (destination TEXT NOT NULL, fingerprint TEXT NOT NULL, "
                 "attempt INTEGER NOT NULL, decision TEXT NOT NULL, resolved_at INTEGER NOT NULL, "
@@ -153,6 +157,7 @@ class RelayLedger(RelayRecoveryMixin):
         entry["retryable"] = (
             entry["status"] == "failed"
             and not entry["needs_review"]
+            and entry["action"] not in {"album_forward", "album_copy"}
             and entry["source_message"] is not None
             and all(
                 entry.get(field) is not None
@@ -192,6 +197,8 @@ class RelayLedger(RelayRecoveryMixin):
         config_digest: str | None = None,
         source_digest: str | None = None,
         retry_claim: str | None = None,
+        media_count: int = 1,
+        media_group_key: str | None = None,
     ) -> tuple[str, int | None]:
         """Return (reserved, attempt) or (skip_reason, None).
 
@@ -293,13 +300,15 @@ class RelayLedger(RelayRecoveryMixin):
                     ),
                 )
                 db.execute(
-                    "UPDATE relay_deliveries SET lease_until=?,retry_floor=?,config_digest=?,source_digest=? "
-                    "WHERE destination=? AND fingerprint=?",
+                    "UPDATE relay_deliveries SET lease_until=?,retry_floor=?,config_digest=?,source_digest=?,"
+                    "media_count=?,media_group_key=? WHERE destination=? AND fingerprint=?",
                     (
                         stamp + max(120, lease_seconds),
                         retry_after_seconds,
                         config_digest,
                         source_digest,
+                        max(1, min(10, media_count)),
+                        media_group_key,
                         destination,
                         fingerprint,
                     ),
@@ -360,7 +369,7 @@ class RelayLedger(RelayRecoveryMixin):
                     else "manual_only"
                     if failure_kind == "transient"
                     and row
-                    and row["action"] in {"forward", "copy"}
+                    and row["action"] in {"forward", "copy", "album_forward", "album_copy"}
                     else "blocked",
                     destination_message,
                     retry_after_seconds,
@@ -433,6 +442,10 @@ class RelayLedger(RelayRecoveryMixin):
                     for r in rows
                     if r["status"] == "failed"
                 ],
+            )
+            db.executemany(
+                "DELETE FROM relay_bot_results WHERE destination=? AND fingerprint=?",
+                [(r["destination"], r["fingerprint"]) for r in rows],
             )
             db.executemany(
                 "DELETE FROM relay_deliveries WHERE rowid=?",

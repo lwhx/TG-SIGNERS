@@ -5,6 +5,7 @@ export type Page =
   | "tasks"
   | "automation"
   | "relay"
+  | "relay-plus"
   | "faults"
   | "logs"
   | "tools"

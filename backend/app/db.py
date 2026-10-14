@@ -84,6 +84,23 @@ class TaskVersion(Base):
     digest: Mapped[str] = mapped_column(String(64))
 
 
+class RelayBackfill(Base):
+    __tablename__ = "relay_backfills"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    task_id: Mapped[int] = mapped_column(Integer, index=True)
+    account_id: Mapped[int] = mapped_column(Integer, index=True)
+    source_chat: Mapped[str] = mapped_column(String(255))
+    before_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    next_before_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    batch_size: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(24), default="queued")
+    scanned: Mapped[int] = mapped_column(Integer, default=0)
+    matched: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str] = mapped_column(String(100), default="")
+    created_at: Mapped[str] = mapped_column(String(40), default=now)
+    updated_at: Mapped[str] = mapped_column(String(40), default=now)
+
+
 class Run(Base):
     __tablename__ = "runs"
     id: Mapped[int] = mapped_column(primary_key=True)

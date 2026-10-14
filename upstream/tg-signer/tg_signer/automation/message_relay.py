@@ -22,6 +22,7 @@ from .delivery_outcome import (
     relay_rpc_state,
     source_snapshot_digest,
 )
+from .media_groups import album_fingerprint, prepare_album
 from .relay_ledger import RelayLedger
 
 if TYPE_CHECKING:
@@ -191,6 +192,44 @@ async def relay_message(
             )
             failures = True
             continue
+
+        worker = ctx.worker
+        task_name = str(getattr(worker, "task_name", ""))
+        task_id = int(task_name) if task_name.isdecimal() else None
+        account_id = getattr(worker, "account_id", None)
+        album = None
+        album_requested = (
+            retry_ref is None
+            and mode in {"forward", "copy"}
+            and target.get("album_mode", "single") == "album"
+            and getattr(event.message, "media_group_id", None) is not None
+        )
+        if album_requested:
+            if ledger is None:
+                ledger = _get_ledger(str(ctx.workdir))
+            album_key = album_fingerprint(
+                account_id=account_id,
+                task_id=task_id,
+                rule_id=event.rule_id,
+                source_chat=str(event.chat_id),
+                media_group_id=str(event.message.media_group_id),
+                target_index=target_index,
+                mode=mode,
+            )
+            # Another member may already have reserved/sent the entire album.
+            # Failed/uncertain albums require manual investigation, never an
+            # automatic resend of one missing-looking member.
+            if ledger.get(str(chat_id).strip().lower(), album_key) is not None:
+                continue
+            try:
+                album = await prepare_album(ctx.client, event, key=album_key)
+            except Exception as exc:  # noqa: BLE001
+                ctx.log(
+                    f"relay_message: album preflight failed ({type(exc).__name__})",
+                    level="WARNING",
+                )
+                failures = True
+                continue
         try:
             normalized = dict(target, mode=mode)
             texts = _content_for_target(normalized, event.message, event, ctx)
@@ -225,19 +264,27 @@ async def relay_message(
             if ledger is None:
                 ledger = _get_ledger(str(ctx.workdir))
             # Hash the exact text used to send, never persist its plaintext.
-            payload_digest = RelayLedger.hash_value(
-                mode
-                + ":"
-                + (
-                    source_snapshot_digest(event.message)
-                    if mode in {"forward", "copy"}
-                    else text
+            payload_digest = (
+                album.digest
+                if album is not None
+                else RelayLedger.hash_value(
+                    mode
+                    + ":"
+                    + (
+                        source_snapshot_digest(event.message)
+                        if mode in {"forward", "copy"}
+                        else text
+                    )
                 )
             )
             fingerprint = (
-                token_hex(32)
-                if dedup == "off" and retry_ref is None
-                else _fingerprint(mode, dedup, event, event.message, text, index)
+                album.fingerprint
+                if album is not None
+                else (
+                    token_hex(32)
+                    if dedup == "off" and retry_ref is None
+                    else _fingerprint(mode, dedup, event, event.message, text, index)
+                )
             )
             if retry_ref is not None:
                 # No replay if the source message was edited or the target's
@@ -249,19 +296,15 @@ async def relay_message(
                     ctx.log("relay_message: fingerprint changed", level="WARNING")
                     continue
                 fingerprint = retry_ref[1]
-            worker = ctx.worker
-            task_name = str(getattr(worker, "task_name", ""))
-            task_id = int(task_name) if task_name.isdecimal() else None
-            account_id = getattr(worker, "account_id", None)
             with ledger.active_delivery(destination, fingerprint) as active:
                 if not active:
                     continue
                 reason, attempt = ledger.reserve(
                     destination,
                     fingerprint,
-                    mode,
+                    "album_" + mode if album is not None else mode,
                     str(event.chat_id),
-                    getattr(event.message, "id", None),
+                    album.message_ids[0] if album is not None else getattr(event.message, "id", None),
                     retry_after,
                     lease,
                     force_failed=retry_ref is not None,
@@ -278,6 +321,8 @@ async def relay_message(
                     ),
                     source_digest=source_snapshot_digest(event.message),
                     retry_claim=retry_claim,
+                    media_count=len(album.message_ids) if album is not None else 1,
+                    media_group_key=album.group_key if album is not None else None,
                 )
                 if reason != "reserved":
                     ctx.log(
@@ -289,7 +334,8 @@ async def relay_message(
                 try:
 
                     async def send(
-                        mode=mode, chat_id=chat_id, text=text, rpc_state=rpc_state
+                        mode=mode, chat_id=chat_id, text=text,
+                        rpc_state=rpc_state, album=album,
                     ):
                         guard = getattr(ctx.worker, "relay_before_send", None)
                         if guard:
@@ -297,6 +343,14 @@ async def relay_message(
                         token = relay_attempt.set(True)
                         state_token = relay_rpc_state.set(rpc_state)
                         try:
+                            if album is not None and mode == "forward":
+                                return await ctx.client.forward_messages(
+                                    chat_id, event.chat_id, list(album.message_ids)
+                                )
+                            if album is not None and mode == "copy":
+                                return await ctx.client.copy_media_group(
+                                    chat_id, event.chat_id, album.message_ids[0]
+                                )
                             if mode == "forward":
                                 return await ctx.client.forward_messages(
                                     chat_id, event.chat_id, event.message.id
@@ -319,13 +373,22 @@ async def relay_message(
 
                     wrapper = getattr(ctx.worker, "_call_telegram_api", None)
                     call = (
-                        wrapper("relay." + mode, send, retry_on_floodwait=False)
+                        wrapper(
+                            "relay." + ("album_" if album is not None else "") + mode,
+                            send,
+                            retry_on_floodwait=False,
+                        )
                         if wrapper
                         else send()
                     )
                     result = await asyncio.wait_for(call, timeout=90)
                     # A response without a message identifier cannot prove delivery.
                     messages = result if isinstance(result, list) else [result]
+                    if album is not None and (
+                        len(messages) != len(album.message_ids)
+                        or any(not getattr(item, "id", None) for item in messages)
+                    ):
+                        raise RuntimeError("UnconfirmedAlbumResponse")
                     message_id = next(
                         (
                             getattr(m, "id", None)
@@ -376,6 +439,29 @@ async def relay_message(
                     True,
                     destination_message=message_id,
                 )
+                if target.get("track_bot_result") and account_id is not None:
+                    bot_chat = getattr(getattr(messages[0], "chat", None), "id", None)
+                    if isinstance(bot_chat, int):
+                        # Receipt-tracking failure never converts an already
+                        # confirmed Telegram send into a failed delivery.
+                        try:
+                            ledger.track_bot_send(
+                                destination=destination,
+                                fingerprint=fingerprint,
+                                account_id=account_id,
+                                task_id=task_id,
+                                bot_chat=bot_chat,
+                                sent_message=message_id,
+                                success_pattern=target.get("bot_success_pattern", ""),
+                                failure_pattern=target.get("bot_failure_pattern", ""),
+                                timeout_minutes=target.get("bot_timeout_minutes", 120),
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            ctx.log(
+                                f"relay_message: Bot receipt tracking unavailable "
+                                f"({type(exc).__name__})",
+                                level="WARNING",
+                            )
                 ctx.log(
                     f"relay_message: delivered to {destination} via {mode}",
                     level="INFO",
