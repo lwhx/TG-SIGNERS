@@ -384,7 +384,10 @@ async def relay_message(
                     result = await asyncio.wait_for(call, timeout=90)
                     # A response without a message identifier cannot prove delivery.
                     messages = result if isinstance(result, list) else [result]
-                    if album is not None and len(messages) != len(album.message_ids):
+                    if album is not None and (
+                        len(messages) != len(album.message_ids)
+                        or any(not getattr(item, "id", None) for item in messages)
+                    ):
                         raise RuntimeError("UnconfirmedAlbumResponse")
                     message_id = next(
                         (
