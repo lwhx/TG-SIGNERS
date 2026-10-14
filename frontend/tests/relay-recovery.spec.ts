@@ -141,6 +141,10 @@ test("retry policy defaults off and persists explicit bounds", async ({
         policy = route.request().postDataJSON();
       return route.fulfill({ json: { policy, batch_size: 5, interval: 30 } });
     }
+    if(path==="/api/maintenance/backups")return route.fulfill({json:{items:[]}});
+    if(path==="/api/maintenance/backups/restore-status")return route.fulfill({json:{pending:null,last:null}});
+    if(path==="/api/maintenance/performance")return route.fulfill({json:{current:null,history:[]}});
+    if(path==="/api/maintenance/performance/schema")return route.fulfill({json:{current:3,supported:3,migrations:[]}});
     throw new Error(path);
   });
   await page.goto("/");
