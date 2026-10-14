@@ -178,7 +178,12 @@ async def security_headers(request, call_next):
         ) or request.headers.get("sec-fetch-site") == "cross-site":
             return JSONResponse({"detail": "不允许跨站请求"}, status_code=403)
         length = request.headers.get("content-length", "0")
-        if not length.isdigit() or int(length) > 10 * 1024 * 1024:
+        max_body = (
+            101 * 1024 * 1024
+            if request.url.path == "/api/maintenance/backups/import"
+            else 10 * 1024 * 1024
+        )
+        if not length.isdigit() or int(length) > max_body:
             return JSONResponse({"detail": "请求体超过 10 MB"}, status_code=413)
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
