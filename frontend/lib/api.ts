@@ -57,6 +57,7 @@ export interface Task {
   failure_pattern: string;
   response_timeout: number;
   folder: string;
+  group_name: string;
   config: any;
   next_run: string | null;
   last_run: string | null;
