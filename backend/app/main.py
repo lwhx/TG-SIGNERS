@@ -57,11 +57,9 @@ from .backup_api import router as backup_router
 from .db import (
     DATA,
     Account,
-    Base,
     Run,
     Session,
     Task,
-    engine,
     get_setting,
     set_setting,
 )
@@ -102,7 +100,6 @@ from .security import (
     valid_token,
 )
 from .schema_migrations import migrate_schema
-from .schema_migrations import schema_status
 from .task_admin import (
     add_revision,
     ensure_baseline,
