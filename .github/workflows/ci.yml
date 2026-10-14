@@ -123,3 +123,27 @@ jobs:
       - name: Stop test container
         if: always()
         run: docker compose down --remove-orphans
+
+
+  arm64-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Build and load ARM64 image under emulation
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/arm64
+          push: false
+          load: true
+          tags: tg-signers:arm64-ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Verify ARM64 runtime packages and binary ABI
+        run: |
+          docker image inspect tg-signers:arm64-ci --format '{{.Architecture}}' | grep -x arm64
+          docker run --rm --platform linux/arm64 --entrypoint python tg-signers:arm64-ci -c "import platform; import fastapi, sqlalchemy, cryptography, pyrogram, tg_signer; assert platform.machine() == 'aarch64'; print('ARM64 Python runtime imports verified')"
