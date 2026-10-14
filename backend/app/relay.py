@@ -75,6 +75,19 @@ def validate_relay_config(config: dict[str, Any]) -> None:
                         [data["chat_id"]] if data.get("chat_id") is not None else []
                     ):
                         sources.add(str(item).strip().lower())
+
+            # No implicit "listen to every chat": a relay rule must declare
+            # at least one source (on its message trigger or filter).
+            filt = rule.get("filters") or {}
+            for item in (filt.get("chat_ids") or []) + (
+                [filt["chat_id"]] if filt.get("chat_id") is not None else []
+            ):
+                sources.add(str(item).strip().lower())
+            sources.discard("")
+            if not sources:
+                raise ValueError("通用消息转发必须在消息触发器或筛选条件中指定来源对话")
+            if not any(t.get("type") == "message" for t in rule.get("triggers", [])):
+                raise ValueError("通用消息转发至少需要一个收到消息时触发器")
             for index, target in enumerate(targets, 1):
                 if not isinstance(target, dict):
                     raise ValueError(f"第 {index} 个转发目标格式错误")
@@ -110,7 +123,17 @@ def validate_relay_config(config: dict[str, Any]) -> None:
                     template = target.get("template")
                     if not isinstance(template, str) or not template:
                         raise ValueError(f"第 {index} 个目标消息模板不能为空")
+                    if len(template) > 4096:
+                        raise ValueError(f"第 {index} 个模板不能超过 4096 个字符")
                     try:
-                        list(Formatter().parse(template))
+                        fields = list(Formatter().parse(template))
                     except ValueError as exc:
                         raise ValueError(f"第 {index} 个模板格式错误") from exc
+                    # Disallow accessing object attributes/indexes through
+                    # format_map (e.g. {value.__class__}).
+                    for _, field, spec, conv in fields:
+                        if field is not None and (
+                            not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", field)
+                            or spec or conv
+                        ):
+                            raise ValueError(f"第 {index} 个模板变量只能使用简单标识符")
