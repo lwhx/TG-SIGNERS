@@ -252,3 +252,39 @@ async def test_message_dedup_is_independent_between_rules(tmp_path):
     assert await relay_message(first, ctx, params) == "continue"
     assert await relay_message(second, ctx, params) == "continue"
     assert len(ctx.worker.sent) == 2
+
+
+@pytest.mark.asyncio
+async def test_same_caption_different_photos_are_not_deduplicated(tmp_path):
+    ctx = Context(tmp_path)
+    params = {
+        "targets": [
+            {"chat_id": "@archive", "mode": "forward", "dedup": "content"},
+        ]
+    }
+    first = event(text=None, caption="同一段图片说明", message_id=101)
+    second = event(text=None, caption="同一段图片说明", message_id=102)
+    first.message.photo = object()
+    second.message.photo = object()
+    assert await relay_message(first, ctx, params) == "continue"
+    assert await relay_message(second, ctx, params) == "continue"
+    assert ctx.client.forwarded == [
+        ("@archive", -100, 101),
+        ("@archive", -100, 102),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_regex_all_matches_is_capped_at_twenty(tmp_path):
+    ctx = Context(tmp_path)
+    params = {
+        "targets": [{
+            "chat_id": "@archive",
+            "mode": "extract",
+            "pattern": r"(X)",
+            "all_matches": True,
+            "dedup": "message",
+        }]
+    }
+    assert await relay_message(event(text="X" * 1000), ctx, params) == "continue"
+    assert len(ctx.worker.sent) == 20
