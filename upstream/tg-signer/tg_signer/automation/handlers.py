@@ -15,6 +15,7 @@ from tg_signer.config import HttpCallback, UDPForward
 from tg_signer.core import UserMonitor
 from tg_signer.notification.server_chan import sc_send
 
+from .message_relay import relay_message
 from .models import AutomationContext, Event
 
 # 统一 handler 返回值语义：
@@ -587,6 +588,7 @@ def register_builtin_handlers() -> None:
     register("blacklist_filter", blacklist_filter)
     register("delay", delay)
     register("forward", forward)
+    register("relay_message", relay_message)
     register("external_forward", external_forward)
     register("server_chan", server_chan)
     register("schedule_next", schedule_next)
