@@ -21,7 +21,6 @@ from backend.app.backup_core import (
 )
 from backend.app.schema_migrations import CURRENT_SCHEMA, migrate_schema, schema_status
 
-
 PASSWORD = "strong-backup-secret-2026"
 
 
