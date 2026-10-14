@@ -67,6 +67,7 @@ from .engine import task_engine
 from .events import LogBridge, bus
 from .notifications import notify
 from .relay import RelayPreviewInput, preview_match
+from .relay_history import router as relay_history_router
 from .schemas import (
     AccountUpdate,
     Check2FA,
@@ -1131,6 +1132,7 @@ def docs():
     return get_swagger_ui_html(openapi_url="/api/openapi.json", title="tg-signer API")
 
 
+api.include_router(relay_history_router)
 app.include_router(api)
 static = Path(os.getenv("STATIC_DIR", "frontend/out"))
 if static.is_dir():
