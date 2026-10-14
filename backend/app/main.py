@@ -697,6 +697,7 @@ async def multi_run(task_id: int, account_ids: list[int]):
             task = Task(**fields)
             db.add(task)
             db.flush()
+            add_revision(db, task, "multi-run-copy")
             targets.append(task.id)
         db.commit()
     return [task_engine.launch(i) for i in targets if i not in task_engine.running]
