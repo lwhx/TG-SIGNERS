@@ -146,6 +146,9 @@ def test_logs_pagination_and_overview(admin):
 def test_websocket_authenticated_history(admin):
     with admin.websocket_connect("/ws/logs", headers={"origin": "http://testserver"}) as ws:
         assert ws.receive_json()["type"] == "history"
+        # Send a close frame explicitly before TestClient tears down the
+        # transport; otherwise Starlette 1.6 can race and cancel its portal.
+        ws.close(code=1000)
 
 
 def test_legacy_v1_import_and_timezone_order(admin, account):
