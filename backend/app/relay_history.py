@@ -8,7 +8,6 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import select
 from tg_signer.automation.engine import UserAutomation
 from tg_signer.automation.message_relay import relay_message
 from tg_signer.automation.models import AutomationContext, Event
