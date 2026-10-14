@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from .backup_core import (
     BackupError,
     backup_path,
+    cancel_queued_restore,
     create_backup,
     import_backup,
     list_backups,
@@ -111,6 +112,13 @@ async def backup_verify(backup_id: str, body: BackupSecret, request: Request):
     return await asyncio.to_thread(
         _lock_run, lambda: verify_backup(DATA, backup_id, body.passphrase)
     )
+
+
+@router.post("/restore-cancel")
+async def backup_restore_cancel(body: DeleteInput):
+    if body.confirmation != "CANCEL":
+        raise HTTPException(400, "取消待恢复操作需要 CANCEL 确认")
+    return await asyncio.to_thread(_lock_run, lambda: cancel_queued_restore(DATA))
 
 
 @router.post("/{backup_id}/restore")
