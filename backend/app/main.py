@@ -80,6 +80,7 @@ from .relay_operations import router as relay_operations_router
 from .relay_p7 import router as relay_p7_router
 from .relay_retry import process_retries
 from .relay_retry import router as relay_retry_router
+from .schema_migrations import migrate_schema
 from .schemas import (
     AccountUpdate,
     Check2FA,
@@ -99,7 +100,6 @@ from .security import (
     require_admin,
     valid_token,
 )
-from .schema_migrations import migrate_schema
 from .task_admin import (
     add_revision,
     ensure_baseline,
