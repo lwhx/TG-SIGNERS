@@ -7,6 +7,7 @@ while the Dashboard is running. Each SQLite file uses the backup API.
 
 from __future__ import annotations
 
+import binascii
 import hashlib
 import io
 import json
@@ -22,6 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 from cryptography.exceptions import InvalidTag
+from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
@@ -221,10 +223,29 @@ def _valid_manifest(manifest: dict, members: dict[str, bytes]) -> None:
                 with sqlite3.connect(f"file:{file}?mode=ro", uri=True) as connection:
                     if connection.execute("PRAGMA quick_check").fetchone() != ("ok",):
                         raise BackupError("备份 SQLite 完整性检查失败")
+                    required = (
+                        {"accounts", "tasks", "runs", "settings"}
+                        if name == "dashboard.sqlite3"
+                        else {"relay_deliveries"}
+                        if name == "upstream/message_relay.sqlite3"
+                        else set()
+                    )
+                    if required:
+                        tables = {
+                            row[0] for row in connection.execute(
+                                "SELECT name FROM sqlite_master WHERE type='table'"
+                            )
+                        }
+                        if not required.issubset(tables):
+                            raise BackupError("备份数据库缺少必要数据表")
             except sqlite3.DatabaseError as exc:
                 raise BackupError("备份中的数据库无法读取") from exc
     if not members["encryption.key"].strip() or not members["jwt.key"].strip():
         raise BackupError("备份中的密钥无效")
+    try:
+        Fernet(members["encryption.key"].strip())
+    except (ValueError, binascii.Error) as exc:
+        raise BackupError("备份中的会话加密密钥不合法") from exc
 
 
 def _decode(blob: bytes, secret: str) -> tuple[dict, dict[str, bytes]]:
