@@ -9,6 +9,12 @@ on:
 permissions:
   contents: read
 
+# Keep the latest PR revision only; avoid duplicate QEMU ARM64 builds.
+# Main pushes remain strictly ordered and are never cancelled.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   backend:
     runs-on: ubuntu-latest
