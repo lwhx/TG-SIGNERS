@@ -6,7 +6,7 @@ import asyncio
 import threading
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -14,6 +14,7 @@ from .backup_core import (
     BackupError,
     backup_path,
     create_backup,
+    import_backup,
     list_backups,
     queue_restore,
     restore_status,
@@ -67,6 +68,28 @@ def pending_restore():
 async def backup_create(body: BackupSecret, request: Request):
     rate_limit("create-backup:" + (request.client.host if request.client else "local"), 5, 600)
     return await asyncio.to_thread(_lock_run, lambda: create_backup(DATA, body.passphrase))
+
+
+@router.post("/import", status_code=201)
+async def backup_import(
+    request: Request,
+    file: UploadFile = File(...),
+    passphrase: str = Form(..., min_length=16, max_length=1024),
+):
+    rate_limit("import-backup:" + (request.client.host if request.client else "local"), 4, 600)
+    chunks = []
+    length = 0
+    try:
+        while chunk := await file.read(1048576):
+            length += len(chunk)
+            if length > 100 * 1024 * 1024:
+                raise HTTPException(413, "上传的备份文件超过 100 MiB")
+            chunks.append(chunk)
+    finally:
+        await file.close()
+    return await asyncio.to_thread(
+        _lock_run, lambda: import_backup(DATA, b"".join(chunks), passphrase)
+    )
 
 
 @router.get("/{backup_id}/download")
