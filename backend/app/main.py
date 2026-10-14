@@ -66,6 +66,7 @@ from .db import (
 from .engine import task_engine
 from .events import LogBridge, bus
 from .notifications import notify
+from .relay import RelayPreviewInput, preview_match
 from .schemas import (
     AccountUpdate,
     Check2FA,
@@ -503,6 +504,18 @@ async def create_task(data: TaskInput):
 )
 def validate_task(data: TaskInput):
     return {"valid": True, "config": data.config}
+
+
+@api.post(
+    "/relay/preview",
+    tags=["自动化"],
+    summary="限时预览消息文本匹配与正则捕获组",
+)
+def preview_relay(data: RelayPreviewInput):
+    try:
+        return preview_match(data)
+    except ValueError as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
 
 
 @api.post("/tasks/run-all", tags=["任务"], summary="执行全部启用的签到任务")
