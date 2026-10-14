@@ -91,6 +91,49 @@ class AuditMixin:
 
 
 class Automation(AuditMixin, AIMixin, UserAutomation):
+    async def _observe_bot_receipt(self, message):
+        """Check only replies sent by a Bot; never infer success from chat timing."""
+        sender = getattr(message, "from_user", None)
+        reply = getattr(message, "reply_to_message", None)
+        chat = getattr(message, "chat", None)
+        if (
+            not sender
+            or not getattr(sender, "is_bot", False)
+            or getattr(message, "outgoing", False)
+            or not reply
+            or not getattr(reply, "id", None)
+            or not chat
+            or not getattr(chat, "id", None)
+            or not getattr(self, "account_id", None)
+        ):
+            return
+        from .relay_history import get_ledger
+
+        try:
+            result = await asyncio.to_thread(
+                get_ledger().observe_bot_reply,
+                account_id=self.account_id,
+                bot_chat=chat.id,
+                reply_to_message=reply.id,
+                bot_message=message.id,
+                text=str(message.text or message.caption or "")[:8000],
+            )
+            if result:
+                bus.emit(
+                    f"Bot 回执：{result['status']} · 任务 #{result['task_id']}",
+                    task_id=result["task_id"],
+                )
+        except Exception as exc:
+            bus.emit(f"Bot 回执解析失败：{type(exc).__name__}", "WARNING")
+
+    async def on_message(self, client, message):
+        await self._observe_bot_receipt(message)
+        await super().on_message(client, message)
+
+    async def on_edited_message(self, client, message):
+        await self._observe_bot_receipt(message)
+        await super().on_edited_message(client, message)
+
     async def _run_rule(self, rule, event):
         parent = super()._run_rule
         text = str((event.message.text or event.message.caption or "") if event.message else "")
