@@ -1,9 +1,7 @@
 """P8 backup crypto, WAL snapshots, tampering, cold recovery and API security."""
 
-import io
 import json
 import sqlite3
-import zipfile
 from pathlib import Path
 
 import pytest
@@ -197,10 +195,10 @@ def test_backup_api_auth_and_management(admin, client, tmp_path, monkeypatch):
     })
     assert scheduled.status_code == 200, scheduled.text
     assert admin.get("/api/maintenance/backups/restore-status").json()["pending"]["id"] == imported_id
-    assert admin.delete("/api/maintenance/backups/"+imported_id,json={
+    assert admin.request("DELETE","/api/maintenance/backups/"+imported_id,json={
         "confirmation":"DELETE",
     }).status_code == 400
-    assert admin.delete("/api/maintenance/backups/"+backup_id,json={
+    assert admin.request("DELETE","/api/maintenance/backups/"+backup_id,json={
         "confirmation":"DELETE",
     }).status_code == 200
 
