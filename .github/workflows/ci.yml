@@ -4,14 +4,16 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   backend:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -19,10 +21,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r backend/requirements.txt -e './upstream/tg-signer[yaml]'
-          python -m pip install pytest pytest-asyncio ruff
-      - run: ruff check backend
-      - run: python -m pytest -q backend/tests
-      - run: python -m pytest -q upstream/tg-signer/tests
+          python -m pip install pytest pytest-asyncio ruff==0.14.6
+      - name: Lint existing backend using stable compatibility rules
+        run: ruff check backend --select E4,E7,E9,F,I,B --ignore B008
+      - name: Dashboard API, accounts, and encrypted sessions
+        run: python -m pytest -q backend/tests
+      - name: Embedded tg-signer executor regression
+        run: python -m pytest -q upstream/tg-signer/tests
 
   frontend:
     runs-on: ubuntu-latest
@@ -36,6 +41,72 @@ jobs:
           node-version: '20'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm run build
+      - name: Install dependencies
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build Dashboard
+        run: npm run build
+
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Compose and original data mount
+        run: |
+          docker compose version
+          docker compose config --quiet
+          docker compose config --format json > /tmp/tg-compose.json
+          python - <<'PYCODE'
+          import json
+          from pathlib import Path
+          services = json.loads(Path('/tmp/tg-compose.json').read_text())['services']
+          assert set(services) == {'dashboard'}
+          dashboard = services['dashboard']
+          assert dashboard['image'] == 'ghcr.io/lwhx/tg-signers:latest'
+          assert dashboard['read_only'] is True
+          assert len(dashboard['ports']) == 1
+          assert dashboard['ports'][0]['host_ip'] == '127.0.0.1'
+          assert dashboard['ports'][0]['target'] == 8999
+          assert any(v['target'] == '/data' and not v.get('read_only', False) for v in dashboard['volumes'])
+          assert 'no-new-privileges:true' in dashboard['security_opt']
+          print('Compose security and /data mapping verified')
+          PYCODE
+
+  docker-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build local Docker image for tests; do not publish
+        run: docker build -t ghcr.io/lwhx/tg-signers:latest .
+      - name: Smoke-test Dashboard and persistent data layout
+        run: |
+          mkdir -p data
+          echo 'preserve-me' > data/.ci-preserve-marker
+          docker compose up -d --no-build
+          ready=0
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent --max-time 3 http://127.0.0.1:8999/api/health >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            if [ "$(docker inspect -f '{{.State.Running}}' tg-signer-dashboard)" != true ]; then
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ready" != 1 ]; then
+            docker compose logs --tail=120 dashboard
+            exit 1
+          fi
+          # The container owns /data as UID 10001 with mode 0700.
+          # Verify from inside the container, not as the GitHub runner user.
+          docker compose exec -T dashboard python -c "from pathlib import Path; d=Path('/data'); files=('dashboard.sqlite3','encryption.key','jwt.key','initial-password.txt','.ci-preserve-marker'); assert all((d/x).is_file() for x in files); assert (d/'.ci-preserve-marker').read_text().strip() == 'preserve-me'"
+          docker compose ps
+      - name: Show logs on failure
+        if: failure()
+        run: docker compose logs --tail=160 dashboard
+      - name: Stop test container
+        if: always()
+        run: docker compose down --remove-orphans
