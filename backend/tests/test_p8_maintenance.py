@@ -7,11 +7,9 @@ from pathlib import Path
 import pytest
 from cryptography.fernet import Fernet
 
-from backend.app import backup_api, performance
+from backend.app import backup_api, backup_core, performance
 from backend.app.backup_core import (
     BackupError,
-    _atomic_bytes,
-    _derive,
     apply_pending_restore,
     backup_path,
     create_backup,
@@ -124,7 +122,7 @@ def test_cold_restore_recovers_interrupted_multi_file_swap(tmp_path):
         "replace": ["jwt.key", "dashboard.sqlite3", "new-key.txt"],
         "existing": ["jwt.key", "dashboard.sqlite3"],
     }
-    _atomic_bytes(data / ".restore-journal.json", json.dumps(journal).encode())
+    backup_core._atomic_bytes(data / ".restore-journal.json", json.dumps(journal).encode())
     (data / ".pending_restore.json").write_text(json.dumps({"id": backup_id}))
     (data / "new-key.txt").write_text("partial")
     result = apply_pending_restore(data)
