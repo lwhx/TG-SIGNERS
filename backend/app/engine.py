@@ -118,6 +118,7 @@ class TaskEngine:
     def __init__(self):
         self.scheduler = AsyncIOScheduler(timezone="UTC")
         self.running = {}
+        self.listener_ready = set()
         self.stopping = False
 
     async def start(self):
@@ -429,6 +430,7 @@ class TaskEngine:
                     if rule.enabled and worker._has_trigger(rule, "startup")
                 ]
                 pending.append(asyncio.create_task(worker.timer_loop()))
+            self.listener_ready.add(task.id)
             bus.emit("监听器已启动", task_id=task.id)
             # Propagate timer failures; message callbacks are handled by upstream.
             if pending:
@@ -436,6 +438,7 @@ class TaskEngine:
             else:
                 await asyncio.Event().wait()
         finally:
+            self.listener_ready.discard(task.id)
             worker.active = False
             for handler in handlers:
                 worker.app.remove_handler(handler, group=group)
