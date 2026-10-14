@@ -3,7 +3,6 @@ import sqlite3
 from pathlib import Path
 
 from backend.app import db as app_db
-from backend.app.db import Session, Task
 from backend.tests.test_api import task_payload
 
 
