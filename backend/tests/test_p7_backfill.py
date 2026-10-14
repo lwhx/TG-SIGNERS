@@ -3,10 +3,11 @@
 import time
 from types import SimpleNamespace
 
+from tg_signer.automation.relay_ledger import RelayLedger
+
 from backend.app import relay_backfill
 from backend.app.db import RelayBackfill, Session, Task
 from backend.tests.test_api import task_payload
-from tg_signer.automation.relay_ledger import RelayLedger
 
 
 def relay_config(*, unsafe=False, dedup="message"):
@@ -147,7 +148,6 @@ def test_manual_backfill_sends_once_and_persists_cursor(admin, account, tmp_path
     try:
         first = admin.post("/api/relay/backfill/start", json=payload)
         assert first.status_code == 202, first.text
-        first_id = first.json()["id"]
         for _ in range(70):
             rows = admin.get("/api/relay/backfill/jobs", params={"task_id": task_id}).json()["items"]
             if rows and rows[0]["status"] in {"completed", "failed"}:
