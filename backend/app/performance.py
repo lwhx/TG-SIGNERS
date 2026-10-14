@@ -18,6 +18,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 
 from .db import DATA
+from .schema_migrations import schema_status
 from .security import rate_limit
 
 router = APIRouter(prefix="/maintenance/performance", tags=["P8 性能基线"])
@@ -111,3 +112,8 @@ async def run_performance_measure(request: Request):
         limit=6, window=60,
     )
     return await asyncio.to_thread(record_measurement)
+
+
+@router.get("/schema", summary="当前数据库版本及已应用的增量迁移")
+def database_schema():
+    return schema_status()
