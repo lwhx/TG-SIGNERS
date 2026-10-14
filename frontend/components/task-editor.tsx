@@ -59,6 +59,48 @@ export const templates: any = {
   },
 };
 const automationTemplates: any = {
+  relay: {
+    rules: [{
+      id: "relay_channels",
+      enabled: true,
+      triggers: [{ type: "message", params: { chat_ids: ["@SourceChannel"] } }],
+      filters: { text_rule: "all", ignore_case: true },
+      handlers: [{
+        handler: "relay_message",
+        params: {
+          ignore_self: true,
+          targets: [{ chat_id: "@TargetChannel", mode: "forward", dedup: "message" }],
+        },
+      }],
+      vars: {},
+    }],
+  },
+  relay_115: {
+    rules: [{
+      id: "long_anime_links",
+      enabled: true,
+      triggers: [{ type: "message", params: { chat_ids: ["@SourceChannel"] } }],
+      filters: {
+        text_rule: "regex",
+        text_value: String.raw`\A20\d{2}｜长时｜连载｜国漫｜[^\r\n]+(?:\r?\n[ \t]*)+https?://115cdn\.com/s/[^\s\r\n]+[ \t]*(?:\r?\n[ \t]*)*\Z`,
+        ignore_case: true,
+      },
+      handlers: [{
+        handler: "relay_message",
+        params: {
+          ignore_self: true,
+          targets: [{
+            chat_id: "@Your115SaveBot",
+            mode: "extract",
+            pattern: String.raw`(https?://115cdn\.com/s/[^\s]+)`,
+            group: 1,
+            dedup: "content",
+          }],
+        },
+      }],
+      vars: {},
+    }],
+  },
   reply: templates.automation,
   cooldown: {
     rules: [
@@ -318,6 +360,8 @@ export function TaskEditor({
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
               <span>从模板开始</span>
               {[
+                ["relay", "通用消息转发"],
+                ["relay_115", "115 链接转存 Bot 示例"],
                 ["reply", "关键词回复"],
                 ["cooldown", "冷却时间调度"],
                 ["ai", "AI + 黑名单"],
@@ -347,7 +391,7 @@ export function TaskEditor({
               {kind === "automation" && (
                 <p className="text-xs leading-6 text-muted">
                   支持 message / timer / startup 触发器，以及
-                  send_text、reply_text、extract_regex、random_pick、delay、schedule_next、ai_reply、blacklist_filter、forward、external_forward、server_chan、store_state、load_state
+                  relay_message（通用多目标转发）、send_text、reply_text、extract_regex、random_pick、delay、schedule_next、ai_reply、blacklist_filter、forward、external_forward、server_chan、store_state、load_state
                   和自定义 handler。
                 </p>
               )}
