@@ -12,7 +12,7 @@
 1. 每个 PR 和 `main` 推送运行 **CI**：后端及嵌入执行器测试、Next.js 类型检查与构建、Compose 验证、实际 Docker 构建与健康检查。
 2. **仅在 main 的 push CI 全部成功后**，自动运行 **Publish GHCR Dashboard** 工作流，发布 `latest` 和不可变提交标记 `sha-<12位提交SHA>`。不会因 PR 或 fork 的提交直接发布镜像。
 3. GitHub Actions 使用 `GITHUB_TOKEN` 与 `packages: write` 权限发布 GHCR 包。发布完成后确认镜像访问权限允许 VPS 拉取；公开仓库不代表包一定公开。
-4. P8 扩展为 Linux amd64 与 Linux arm64 双架构；ARM64 必须先通过模拟运行与原生 Python 依赖 CI，才能随主分支自动发布。
+4. P8 扩展为 Linux amd64 与 Linux arm64 双架构；CI 使用 ARM64 原生 runner 验证实际 Python 依赖和运行环境，发布使用 Buildx + QEMU 构建双架构镜像。
 
 ## 从原版 Dashboard 迁移
 
@@ -42,11 +42,22 @@ docker compose logs --tail=100 dashboard
 
 宝塔 HTTPS 反向代理环境应将 `COOKIE_SECURE` 改为 `true`；默认容器映射为 `127.0.0.1:8999:8999`，由宝塔代理至该地址。**禁止同时启动两套 Dashboard 写入同一个 SQLite 或使用同一 Telegram Session。**
 
+### 旧版容器占用 8999
+
+遇到 `Bind for 127.0.0.1:8999 failed: port is already allocated`，先执行：
+
+```bash
+docker ps --format 'table {{.Names}}\t{{.Ports}}'
+sudo ss -ltnp | grep ':8999'
+```
+
+确认是已废弃的旧版 TG-SIGNER 时才用 `docker stop OLD_CONTAINER_NAME` 停止旧容器；不要直接删除旧数据。如需并存，可将其中一套的 Compose 改为 `127.0.0.1:19099:8999`，同时确保容器名与 `data/` 绑定目录不同。停止旧容器**不代表数据已迁移**，新版不会自动读取另一目录的账号和 Session。
+
 ## 回滚
 
 如发生问题，先停止新容器，将 Compose 中的镜像改回之前已验证的版本，再启动。若升级过程修改过数据库结构，先从停机备份恢复**整个** `data/`（包括密钥、WAL/SHM 文件和 `upstream/`），不要只恢复单个 SQLite 文件。
 
-本次 P0 不修改数据库模型、账号登录或任务配置。下一阶段通用转发引擎需要在隔离数据副本中确认兼容性；此阶段不包含该功能。
+当前已完成 P1–P8，包含持久化转发账本、任务分组、配置版本、媒体组与 P8 SQLite schema 增量迁移。跨版本回滚必须同时恢复升级前的完整数据目录；不要把仅更换镜像视为安全回滚。
 
 ## P8 加密备份、迁移与 ARM64
 
