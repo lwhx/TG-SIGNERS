@@ -1,57 +1,129 @@
-tg-signer Dashboard 安装说明
-====================================
+TG-SIGNERS Dashboard 安装与更新说明（v1.2.0）
+================================================
 
-镜像 ghcr.io/dongbo501/tg-signer:latest 适用于 Linux x86_64 / amd64。
-镜像不包含账号、任务、Telegram Session、数据库或任何密钥。
+仓库：https://github.com/lwhx/TG-SIGNERS
+镜像：ghcr.io/lwhx/tg-signers:latest
+架构：Linux AMD64（x86_64）与 Linux ARM64（aarch64）
 
-1. 准备 Docker
---------------
-Ubuntu / Debian 未安装 Docker 时，以 root 执行：
+注意：本仓库是基于 dongbo501/TG-SIGNER 的改造版。请不要使用
+ghcr.io/dongbo501/tg-signer:latest 或从原作者地址下载的 Compose 替换本项目配置。
+完整文档和 P5–P8 功能介绍请阅读项目根目录 README.md。
 
-  apt-get update
-  apt-get install -y curl ca-certificates
-  curl -fsSL https://get.docker.com -o /tmp/install-docker.sh
-  sh /tmp/install-docker.sh
-  systemctl enable --now docker
+1. 环境检查
+------------------------------
+需要 Linux、Docker Engine、Docker Compose v2，且能够拉取 GHCR 镜像。
+运行：
 
-2. 下载 Compose 并启动
------------------------
+  docker --version
+  docker compose version
+  docker ps --format 'table {{.Names}}\t{{.Ports}}'
 
-  mkdir -p /opt/tg-signer
-  cd /opt/tg-signer
-  curl -fsSLO https://raw.githubusercontent.com/dongbo501/TG-SIGNER/main/docker-compose.yml
-  docker compose pull
-  docker compose up -d --wait
+同一个数据目录只能有一个运行中的 Dashboard；Telegram Session 不应
+被多个容器同时使用。
 
-启动后只运行单个 dashboard 容器；data 目录会自动创建并修正属主，无需手动 chown。
-默认只绑定 127.0.0.1:8999。首次密码写入 data/initial-password.txt；登录后请立即修改。
-通过 SSH 隧道访问：
+2. 全新安装
+------------------------------
+  git clone https://github.com/lwhx/TG-SIGNERS.git
+  cd TG-SIGNERS
+  docker compose config --quiet
+  docker compose pull dashboard
+  docker compose up -d --wait dashboard
+  docker compose ps
 
-  ssh -L 8999:127.0.0.1:8999 root@服务器地址
+默认仅绑定服务器 127.0.0.1:8999，不会监听公网 IP。
+首次初始化密码（在实际 Compose 目录操作）：
 
-3. 修改安装参数
-----------------
+  cat data/initial-password.txt
 
-编辑 docker-compose.yml 中的 TZ、COOKIE_SECURE、ADMIN_PASSWORD 和端口映射，然后执行：
+可从自己电脑通过 SSH 隧道访问：
 
-  docker compose up -d --wait
+  ssh -L 8999:127.0.0.1:8999 root@服务器IP
 
-ADMIN_PASSWORD 只在首次初始化时生效，至少需要 12 个字符。公网 HTTPS 反向代理应设置
-COOKIE_SECURE=true，并保留 Host 头和 WebSocket 转发。
+然后在自己电脑浏览器打开 http://127.0.0.1:8999。
 
-4. 更新与备份
---------------
+3. 宝塔 / AxisNow / 反向代理
+------------------------------
+同机 HTTPS 反向代理可将源站设置为 http://127.0.0.1:8999。
+启用 HTTPS 后把 docker-compose.yml 内 COOKIE_SECURE 修改为 "true"。
+保留 Host、Cookie 和 WebSocket 支持。若代理与容器不在同一主机或
+网络命名空间中，须配置代理可达的源站地址。
 
-更新时先备份 data 目录，再拉取新镜像并执行：
+4. 端口冲突（旧 Docker 应用占用 8999）
+------------------------------
+错误示例：
 
-  docker compose pull
-  docker compose up -d --wait
+  Bind for 127.0.0.1:8999 failed: port is already allocated
 
-必须同时备份 data/dashboard.sqlite3、data/encryption.key 和 data/jwt.key。恢复前执行
-`docker compose down`，解压 data 目录后再启动。不要把 data 目录或导出的 Session 提交到 Git。
+先检查：
 
-5. 架构限制
-------------
+  docker ps --format 'table {{.Names}}\t{{.Ports}}'
+  sudo ss -ltnp | grep ':8999'
 
-当前版本使用 SQLite 和内存中的 APScheduler，必须保持单 worker、单容器、单副本运行。
-真实 Telegram 登录、发信、AI 能力和通知渠道需要使用者自己的账号、网络和 API 凭据。
+只有在确认占用端口的容器确实是废弃旧版本后，才停止该容器：
+
+  docker stop OLD_CONTAINER_NAME
+  docker compose up -d --wait dashboard
+
+不要误停其他服务，也不要删除旧版持久数据。
+若确实要同时运行两套不同的实例，需要修改其中一套 Compose 的
+宿主机端口，如：
+
+  ports:
+    - "127.0.0.1:19099:8999"
+
+右侧容器端口 8999 不变。两套实例还必须使用不同容器名和不同数据目录。
+停止旧容器并不会自动将旧的 Telegram 账号、任务或 Session 迁移到新实例。
+
+5. 更新前备份与更新步骤
+------------------------------
+在已经运行本项目的实际 Compose 目录执行：
+
+  pwd
+  docker compose ps
+  docker compose stop dashboard
+  umask 077
+  mkdir -p backups
+  tar -czf "backups/data-before-upgrade-$(date +%Y%m%d-%H%M%S).tar.gz" data
+  docker compose pull dashboard
+  docker compose up -d --wait dashboard
+  docker compose logs --tail=100 dashboard
+
+必须连同 data/dashboard.sqlite3、data/encryption.key、data/jwt.key、
+data/upstream/ 和其余状态一起备份。不要只复制正在运行的单个 SQLite。
+升级不会自动迁移不同路径下的旧版 data；核对 Compose 文件位置和挂载。
+
+可以运行 ./scripts/backup.sh 进行停机备份（脚本结束后尝试恢复服务），
+但该脚本不自动更新镜像。
+
+6. P8 加密备份与冷启动恢复
+------------------------------
+在「系统设置 → 加密备份与恢复」可创建、下载、导入、校验、
+删除 .tgsb 加密备份；备份密码至少 16 个字符，必须自行保存。
+
+恢复不是在线热替换：
+- 先上传或选择备份，并用原密码完成验证。
+- 确认恢复后仅暂存；必要时可以在重启前取消。
+- 管理员手动运行：docker compose restart dashboard
+- 容器启动脚本会在加载应用数据库和密钥前执行恢复，保留回退快照。
+
+数据文件、密钥及可选回退副本都是敏感信息，不得公开分享。
+跨版本回滚建议使用升级前的整目录停机备份。
+
+7. 管理与验证
+------------------------------
+  docker compose ps
+  docker compose logs --tail=100 dashboard
+  docker compose restart dashboard
+
+健康端点：/api/health
+Swagger：登录后访问 /api/docs
+
+镜像由主分支 CI 全部成功后自动构建发布；GHCR latest 包含
+linux/amd64 和 linux/arm64。只有一个 Uvicorn worker 和单实例
+调度器是受支持的运行方式。
+
+P5 故障中心、P6 分组/配置版本、P7 Bot 回执/媒体组/历史补抓等
+操作说明和异常保护机制请查阅 README.md 与 docs/ 下的相应文档。
+
+真实 Telegram 登录、转发、115 Bot 处理及外部通知需要管理员在自己的
+Telegram 环境完成验收。未经验证不要一次性开启大量历史补抓任务。
