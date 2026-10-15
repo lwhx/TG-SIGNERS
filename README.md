@@ -1,229 +1,258 @@
-# tg-signer Dashboard
+# TG-SIGNERS · Telegram 签到与消息转发 Dashboard
 
-面向 Telegram 签到、自动化与消息监控的单容器 Web 控制台（当前版本：`1.2.0`）。
+**Dashboard v1.2.0 · 单容器 · 中文界面 · Linux AMD64 / ARM64**
 
-当前仓库：<https://github.com/lwhx/TG-SIGNERS> · Dashboard 原作者：<https://github.com/dongbo501/TG-SIGNER> · 上游执行器：<https://github.com/amchii/tg-signer>
+[项目仓库](https://github.com/lwhx/TG-SIGNERS) · [GHCR 镜像](https://github.com/lwhx/TG-SIGNERS/pkgs/container/tg-signers) · [CI](https://github.com/lwhx/TG-SIGNERS/actions/workflows/ci.yml) · [版本记录](CHANGELOG.md)
 
-基于 [amchii/tg-signer](https://github.com/amchii/tg-signer) 的中文 Web 控制台。前后端、Telegram 协议库和 tg-signer **打包在一个 Docker 镜像、一个运行容器中**。无需另外部署 Node、Nginx、Redis 或数据库容器。
+TG-SIGNERS 是一个集 Telegram 多账号管理、Bot 签到、规则自动化、通用消息监控与转发、故障处置于一体的 Web 控制台。**前端、FastAPI、Telegram 客户端与执行器封装在一个 Docker 容器中**，不需要额外的 Node、Redis 或数据库服务。持久化使用 SQLite 和宿主机 `./data` 绑定目录。
 
-前端采用 Next.js 14 App Router 静态导出、React、Tailwind CSS、Shadcn 风格的 Radix UI 组件、TanStack Table、Lucide、Zustand 和 Recharts；FastAPI 同时提供静态网页、REST API 与 WebSocket；前端支持 EventSource 自动回退。后端采用 SQLAlchemy + SQLite WAL、APScheduler、Kurigram（兼容 Pyrogram）。
+本项目在 [dongbo501/TG-SIGNER](https://github.com/dongbo501/TG-SIGNER) Dashboard 基础上改造，内置执行器来自 [amchii/tg-signer](https://github.com/amchii/tg-signer) 固定版本，并新增自有的 `relay_message` 消息转发与持久化投递账本。**这是改造版，不要将原作者仓库的 Compose 或镜像地址与本仓库混用。**
 
-上游执行器基于 `fc8905db2ee74e2d9afc135cce88b50be35b6212`（版本 `0.9.1`），保留源码和 BSD-3-Clause 许可证。**本仓库已在内置执行器基础上添加自定义 `relay_message` 转发 Handler 与持久化去重，不再与原始上游源码完全一致。** 原签到、Monitor 和自动化 Handler 保留。
+> **发布状态**：v1.2.0 对应的主分支 CI 和 GHCR 双架构发布工作流已经成功执行。更新前仍应确认当前目标镜像可拉取，并完整备份现有数据。真实 Telegram、115 Bot 与外部通知需要在自己的账号环境中验收。
 
-P3 已增加数据库聚合、后台标签页暂停刷新、历史保留策略和转发异常汇总。入口为「系统设置 → 运行与历史保留」：清理默认关闭，启用后分批处理过期历史并保留成功投递去重标记。详见 [P3 运行维护与使用说明](docs/P3-OPERATIONS.md)。
+## 功能概览
 
-**P8 新增**：「系统设置」可创建/下载/导入加密备份，验证后**下次容器重启**才恢复数据库和密钥；新增只读性能基线与 SQLite 迁移版本；GHCR 支持 AMD64 / ARM64。Dashboard 会在恢复前保留回退快照，不会在运行中直接替换 SQLite。升级前仍建议停机完整备份 `data/`。具体操作请先读 [P8 加密备份与升级手册](docs/P8-MAINTENANCE-RELEASE.md)。
+| 模块 | 主要能力 | 页面 |
+| --- | --- | --- |
+| 账号与签到（P0） | 多账号验证码 / 2FA 登录、Session 导入、定时与手动签到、随机延时、响应匹配 | 账号、签到任务 |
+| 通用转发（P1–P4） | 多来源→多目标；forward、copy、text、extract、template；正则、去重、投递账本、安全重试 | 自动化与转发、转发记录 |
+| 故障处理（P5） | 故障中心、重试排期、监听状态、CSV 元数据导出、可选恢复通知 | 故障中心 |
+| 管理效率（P6） | 管理分组、任务复制、批量启停和删除、完整转发模拟预览、配置历史与回滚 | 签到任务、自动化与转发 |
+| 转发增强（P7） | 115 Bot 回复结果追踪、媒体组整组投递、按批次手动历史消息补抓 | 转发增强 |
+| 维护发布（P8） | 加密备份导入导出、冷启动恢复、性能采样、数据库迁移记录、AMD64/ARM64 镜像 | 系统设置 |
+| 其他工具 | Telegram 文件夹 / 话题、成员查询、定时消息、Python Handler、AI 能力和多渠道通知 | 工具箱、系统设置 |
 
-## 1. 项目目录
+**状态语义要分清**：Telegram 返回成功，只说明消息已发送到目标，不代表 115 Bot 已转存成功；P7 只在 Bot 对原消息作出可明确关联的回复时才识别转存结果。投递结果不确定时，不会为了追求“成功率”盲目重复发送。
+
+详细说明：[P4 可靠性](docs/P4-RELIABILITY.md) · [P5 故障中心](docs/P5-OPERATIONS.md) · [P6 配置管理](docs/P6-TASK-MANAGEMENT.md) · [P7 转发增强](docs/P7-RELAY-EXPANSION.md) · [P8 维护发布](docs/P8-MAINTENANCE-RELEASE.md) · [完整功能映射](docs/FEATURES.md)
+
+## 环境要求
+
+- 支持 Docker Engine 和 Docker Compose v2 的 Linux 服务器（`linux/amd64` 或 `linux/arm64`）。
+- 服务器能够访问 GHCR 和 Telegram；部分地区需要独立的网络代理。
+- 新部署建议有可持久化的本地磁盘；不要将 `data/` 放在临时目录。
+- **一个数据目录只运行一个 Dashboard 容器、一个 Uvicorn worker。** 不得同时让新旧项目连接同一份 SQLite / Telegram Session。
+
+## 1. 全新安装
+
+从**本仓库**获取 Compose，避免误用原作者的镜像：
+
+```bash
+git clone https://github.com/lwhx/TG-SIGNERS.git
+cd TG-SIGNERS
+docker compose config --quiet
+docker compose pull dashboard
+docker compose up -d --wait dashboard
+docker compose ps
+```
+
+当前 Compose 的服务名是 `dashboard`，容器名是 `tg-signer-dashboard`，镜像为：
 
 ```text
-.
-├── Dockerfile                    # 多阶段构建，最终只有一个 Python 运行容器
-├── docker-compose.yml            # 唯一服务 dashboard，包含全部安装参数
-├── scripts/
-│   └── backup.sh                 # 停机一致性备份，自动恢复运行
-├── backend/
-│   ├── requirements.txt
-│   ├── app/
-│   │   ├── main.py               # WebSocket、旧版兼容路由、静态页面
-│   │   ├── panel_api.py          # 登录、安全 Cookie 与健康检查路由
-│   │   ├── backup_core.py        # 加密备份与冷启动可回滚恢复
-│   │   ├── backup_api.py         # 备份导入、下载、校验和暂存恢复
-│   │   ├── restore_boot.py       # Uvicorn 启动前的恢复入口
-│   │   ├── schema_migrations.py  # SQLite schema 版本及迁移
-│   │   ├── performance.py        # 性能指标采样
-│   │   ├── auth.py               # Telegram 多步骤登录状态机
-│   │   ├── security.py           # Argon2、JWT、Fernet 加密、限流
-│   │   ├── schemas.py            # Pydantic 请求与上游配置校验
-│   │   ├── db.py                 # SQLAlchemy 模型和 SQLite
-│   │   ├── telegram.py           # 共享客户端、无交互登录、上游适配
-│   │   ├── engine.py             # 随机调度、任务执行、规则审计
-│   │   ├── events.py             # 日志桥接、有界 WebSocket 队列
-│   │   └── notifications.py      # 五种通知渠道
-│   └── tests/                    # API、鉴权、登录状态机、调度与匹配测试
-├── frontend/
-│   ├── app/{layout.tsx,page.tsx,globals.css}
-│   ├── components/
-│   │   ├── auth-dialog.tsx        # useReducer 登录状态机
-│   │   ├── task-editor.tsx        # 动作表单、完整 JSON、YAML 导入
-│   │   ├── schedule-picker.tsx    # 鼠标/键盘选择时间与重复频率
-│   │   ├── logs.tsx              # WS 终端与分页执行历史
-│   │   ├── settings.tsx
-│   │   ├── tools.tsx
-│   │   ├── common.tsx            # TanStack Table 等通用组件
-│   │   └── ui/                   # Radix / Shadcn UI 基础组件
-│   ├── lib/{api.ts,store.ts,utils.ts,schedule.ts}
-│   ├── tests/dashboard.spec.ts    # Playwright 浏览器回归
-│   └── package-lock.json
-├── upstream/tg-signer/            # 固定版本的完整上游
-├── docs/
-│   ├── ARCHITECTURE.md
-│   ├── FEATURES.md                # 上游能力到网页入口的逐项映射
-│   └── VERIFICATION.md
-└── data/                         # 唯一持久数据目录，不进入镜像/版本控制
-    ├── dashboard.sqlite3
-    ├── encryption.key
-    ├── jwt.key
-    ├── initial-password.txt      # 首次随机密码，修改后删除
-    └── upstream/                 # 上游记录、规则状态、自定义插件
+ghcr.io/lwhx/tg-signers:latest
 ```
 
-## 2. Telegram 登录状态机与完整代码
-
-后端完整实现：[backend/app/auth.py](backend/app/auth.py)。前端完整实现：[frontend/components/auth-dialog.tsx](frontend/components/auth-dialog.tsx)。路由：[backend/app/main.py](backend/app/main.py)。
-
-```mermaid
-stateDiagram-v2
-    [*] --> PARAMETERS
-    PARAMETERS --> CODE_SENT: send-code / connect + send_code
-    CODE_SENT --> CODE_SENT: 60 秒后 resend_code，更新 hash
-    CODE_SENT --> CODE_SENT: 验证码错误，可重试
-    CODE_SENT --> TWO_FA: sign_in 抛出 SessionPasswordNeeded
-    CODE_SENT --> AUTHORIZED: sign_in 成功
-    TWO_FA --> TWO_FA: PasswordHashInvalid，可重试
-    TWO_FA --> AUTHORIZED: check_password 成功
-    AUTHORIZED --> [*]: get_me + 加密 Session 入库 + disconnect
-    CODE_SENT --> EXPIRED: 十分钟 / 取消 / 服务重启
-    TWO_FA --> EXPIRED: 十分钟 / 取消 / 服务重启
-    EXPIRED --> PARAMETERS: 重新开始
-```
-
-- `POST /api/auth/send-code`：手机号、自定义或默认 API、独立代理；返回随机 `flow_id`、`phone_code_hash`、重发倒计时。
-- `POST /api/auth/sign-in`：验证 flow、hash、验证码；返回 `AUTHORIZED` 或 `2FA_REQUIRED`。
-- `POST /api/auth/check-2fa`：仅允许在 `2FA_REQUIRED` 状态提交密码。
-- `DELETE /api/auth/flows/{flow_id}`：取消并清理连接。
-- 每个流程单独加锁，最多八次验证尝试、十分钟有效期；每个手机号限频，最多二十个未完成流程。错误请求不会越过状态机。
-- 不调用 Pyrogram 交互式 `start()` 获取验证码，不保存验证码、2FA 密码或待登录流程到数据库。成功后 Session、API_HASH、代理凭据以 Fernet 加密。
-- 导入支持 **Pyrogram/Kurigram** Session String 与 `.session` SQLite 文件；先验证实际授权，再保存。Telethon 文件不是相同格式，会明确拒绝而不是错误识别。
-
-## 3. 数据表与任务执行
-
-完整 SQLAlchemy 模型位于 [backend/app/db.py](backend/app/db.py)。
-
-| 表 | 关键字段 | 用途 |
-|---|---|---|
-| `accounts` | `user_id UNIQUE`、`session`、`api_hash`、`proxy`、状态、头像、最后验证时间 | 账号与加密凭据 |
-| `tasks` | `account_id FK`、`kind`、`enabled`、`cron`、时区、随机上下限、正则、完整 `config JSON`、`next_run` | 三种任务统一管理 |
-| `runs` | 账号/任务外键与名称快照、开始/完成时间、结果、摘要、Telegram 原文 | 签到及每次自动化规则的执行审计 |
-| `settings` | `key PRIMARY KEY`、`value` | 密码哈希、JWT 版本、代理、AI、加密通知配置 |
-
-删除任务会保留历史执行快照；绑定任务的账号不能直接删除。SQLite 使用 WAL、外键约束与 30 秒 busy timeout。
-
-随机执行时间 = 标准五段 Cron 的下一次时间 + `[delay_min, delay_max]` 范围内随机秒数，采样后写入数据库。Cron 按 POSIX 语义解释（0/7 为周日）。APScheduler 执行持久时间对应的单次作业。重启后恢复时间，五分钟内的过期调度补执行一次，更久的错过任务跳到下一次；同一任务拒绝并发触发，同账号签到与工具操作串行执行。手动运行立即进入队列，不再叠加随机等待。
-
-网页调度使用时间选择器，可点击选择或键盘输入 `08:30`，支持每天、工作日、周末、每周指定星期、每月指定日期。每月日期支持多选，例如每月 1、15、28 日均在同一时间执行；当月没有的日期会跳过，其余所选日期照常执行。任务列表显示中文计划，正常配置无需输入 Cron。导入的复杂计划会原样保留，直到明确选择新的重复频率。后端与配置导出仍使用兼容上游的 Cron 格式。
-
-五种签到动作直接复用上游 `UserSigner` 和 Telegram API 限速/FloodWait 包装器，额外捕获普通消息、编辑消息和按钮回调提示。成功正则逐目标校验，失败规则优先；缺少成功规则时记录为 **completed（动作完成，未验证签到成功）**。不同话题和自己发出的消息不会被误计为成功回复。正则匹配设置执行时间预算。
-
-Automation 复用上游触发器、过滤器、模板、handler、持久状态；Monitor 保留上游兼容行为。每次规则处理单独写入执行历史，监听任务可启停，服务重启会恢复启用的监听。
-
-> 当前仓库使用自己的 GHCR 镜像，源码更新后由 GitHub Actions 在 `main` CI 全部通过时自动发布。正式迁移前请先阅读 [自有 GHCR 发布与数据保护指南](docs/GHCR-DEPLOY.md)，备份原来的 `data/`，不要切换到尚未发布的镜像。
- 
-## 通用消息监控与转发（P1–P4）
-
-在 **自动化与转发 → 新建自动化** 中点击「通用消息转发」模板，即可图形化设置多个来源、多个目标、`forward/copy/text/extract/template` 五种模式以及 `message/content/off` 去重策略。支持带捕获组的正则测试、最多 25 个投递目标、持久化 SQLite 状态和失败冷却机制。
-
-可选的「115 链接转存 Bot 示例」仅负责识别并发送分享链接，真正的转存过程仍由目标 Bot 完成。详细使用和数据保护说明见 [通用消息转发文档](docs/MESSAGE-RELAY.md)。
-
-在侧边栏「**转发记录**」可查询投递历史、来源、目标、失败错误类型、尝试次数及最近 7 天统计，并对具备完整来源信息的失败记录进行**来源校验后的人工重试**。升级后新记录可关联账号与任务，历史 P1 记录仍可读但因缺少溯源信息不能安全重试；`dedup=off` 模式现在也会独立记录每次投递，不进行去重。不会保存消息正文。P4 增加“待核查”状态和管理员确认；普通重复事件不会再触发失败重发。自动重试默认关闭，仅对文本/提取/模板的明确临时拒绝提供有界队列，forward/copy 保留人工处理。设置入口为「系统设置 → 转发可靠性」，详见 [P4 可靠性与升级说明](docs/P4-RELIABILITY.md)。升级前停机备份完整 data；回滚须同时恢复升级前数据。
-
-## 4. 单容器部署
-
-镜像发布在 `ghcr.io/lwhx/tg-signers:latest`（Linux amd64）。在项目目录（或只放一份 `docker-compose.yml` 的目录）中执行：
-
-```bash
-docker compose pull
-docker compose up -d --wait
-```
-
-默认端口映射为 `127.0.0.1:8999:8999`，访问 **http://127.0.0.1:8999**。全部安装参数直接在 `docker-compose.yml` 中修改，无需 `.env` 文件：
+默认 Compose 关键配置如下（完整内容请以 [docker-compose.yml](docker-compose.yml) 为准）：
 
 ```yaml
-ports:
-  - "127.0.0.1:8999:8999"
-environment:
-  TZ: "Asia/Shanghai"
-  COOKIE_SECURE: "false"
-  ADMIN_PASSWORD: ""
+services:
+  dashboard:
+    image: ghcr.io/lwhx/tg-signers:latest
+    container_name: tg-signer-dashboard
+    ports:
+      - "127.0.0.1:8999:8999"
+    environment:
+      TZ: "Asia/Shanghai"
+      COOKIE_SECURE: "false"
+      ADMIN_PASSWORD: ""
+    volumes:
+      - ./data:/data
 ```
 
-首次密码：
+- 左侧 `127.0.0.1:8999` 是**宿主机监听地址与端口**；右侧 `8999` 是容器内部端口。
+- 默认只监听服务器本机回环地址，**无法直接通过服务器公网 IP 的 8999 端口访问**。
+- `./data` 以 **Compose 文件所在目录**为基准；换部署目录不会自动继承旧目录里的账号、任务和 Session。
+- `ADMIN_PASSWORD` 只在首次初始化空数据目录时有效；以后修改这个值不会覆盖已保存的管理密码。
+
+### 首次登录
+
+留空 `ADMIN_PASSWORD` 时自动生成初始密码：
 
 ```bash
-sudo cat data/initial-password.txt
-```
-
-容器内读取也可以：
-
-```bash
+cat data/initial-password.txt
+# 或
 docker compose exec dashboard cat /data/initial-password.txt
 ```
 
-设置页可修改密码；变更会撤销所有旧 JWT。也可以在首次初始化前修改 `docker-compose.yml` 的 `environment.ADMIN_PASSWORD`，设置至少十二位的密码；留空则自动生成。之后修改此参数不会覆盖已保存的密码。
-
-最终镜像只包含 Python 运行时、构建好的前端、tg-signer 与依赖。容器以 root 启动，仅用于把 `/data` 属主修正为 UID 10001，随后降权为 UID 10001 运行且不保留任何 Linux capability；根文件系统只读；`/data` 挂载可写，`/tmp` 使用 tmpfs。容器监听 8999，静态页面、API、WebSocket 使用同一来源。**请维持单 worker 和单副本**，以免重复调度和 Telegram Session 争用。
-
-远程通过 SSH 访问：
+远程管理推荐使用 HTTPS 反向代理；临时查看可在自己的电脑建立 SSH 隧道：
 
 ```bash
-ssh -L 8999:127.0.0.1:8999 root@服务器地址
-# 然后在自己电脑打开 http://127.0.0.1:8999
+ssh -L 8999:127.0.0.1:8999 root@服务器IP
 ```
 
-如需直接绑定其他地址，修改 `docker-compose.yml` 的 `ports`，例如 `"0.0.0.0:8999:8999"`；修改宿主机端口时保留最后的容器端口 `8999`。面向公网使用现有 HTTPS 反向代理，并在同一文件的 `environment` 中设置 `COOKIE_SECURE: "true"`；代理应保留 Host 并支持 WebSocket。修改配置后执行 `docker compose up -d --wait` 生效。项目不会修改机器已有的代理或其他容器。
+随后在**自己的电脑浏览器**打开 `http://127.0.0.1:8999`。若本机 8999 也被占用，可把 SSH 命令最前面的本地端口改成其他空闲端口。
 
-管理命令：
+登录后先修改管理密码，再添加 Telegram 账号、测试连接、创建一个小范围任务进行实际验证。验证码、2FA 密码不会保存为持久配置；账号 Session 和相关凭据在数据目录中加密存储。
+
+### 宝塔 / AxisNow / HTTPS 反向代理
+
+默认推荐保持 `127.0.0.1:8999:8999`，让与 Docker 位于**同一台服务器**的代理转发到 `http://127.0.0.1:8999`。如果代理与 Docker 不在同一网络命名空间，需另行配置可达的安全源站地址，不能把远端代理的 `127.0.0.1` 当成 Docker 宿主机。
+
+正式通过 HTTPS 访问时，将 Compose 内 `COOKIE_SECURE` 设为 `"true"`，代理保留 Host、Cookie 并支持 WebSocket；使用纯 HTTP 本地调试时保留 `"false"`。不要为了图方便直接将未受保护的管理面板暴露到公网。
+
+## 2. 8999 端口被占用：新旧容器冲突
+
+如果启动失败并提示：
+
+```text
+Bind for 127.0.0.1:8999 failed: port is already allocated
+```
+
+**先检查是否仍运行着原作者或之前部署的 TG-SIGNER。不要立即删除当前的数据目录。**
 
 ```bash
-docker compose ps                         # 健康状态
-docker compose logs --tail=100 -f          # 服务日志
-docker compose restart                   # 重启
-docker compose pull && docker compose up -d --wait   # 更新
-docker compose down                      # 删除唯一容器和项目网络，保留 data
-# 删除镜像（可选）
-docker image rm ghcr.io/lwhx/tg-signers:latest
+docker ps --format 'table {{.Names}}\t{{.Ports}}'
+sudo ss -ltnp | grep ':8999'
+docker compose ps
 ```
 
-彻底删除账号和密钥时，在确认备份不再需要后再删除 `data/`。`docker compose down -v` 不会删除这里使用的宿主机绑定目录。
-
-备份与恢复：
+确认占用端口的确实是**不再需要运行的旧容器**后，在不依赖该旧服务的前提下停止它：
 
 ```bash
-./scripts/backup.sh
-# 恢复：先 docker compose down，再解压备份到项目目录
-# sudo tar -xzf backups/tg-signer-时间戳.tar.gz -C .
-# （无需手动 chown，容器启动时会自动修正 data 属主）
-# docker compose up -d --wait
+docker stop OLD_CONTAINER_NAME
+docker compose up -d --wait dashboard
 ```
 
-必须把数据库与 `encryption.key`、`jwt.key` 一起备份。丢失加密密钥将无法解密已有会话。不要把数据目录或导出的 Session 提交到 Git。
+这里的 `OLD_CONTAINER_NAME` 需要替换为实际查到的名称，**不要停止不认识的其他容器**。如果旧版有账号、任务或 Session，先备份其实际挂载目录；**停止/删除容器并不等于把旧数据迁移到新版**。
 
-Swagger：登录后打开 **http://127.0.0.1:8999/api/docs**；OpenAPI JSON：`/api/openapi.json`。
+如果需要同时运行两套彼此独立的 Dashboard，可以只修改其中一套的宿主机端口，例如：
 
-## 功能与验证边界
+```yaml
+ports:
+  - "127.0.0.1:19099:8999"
+```
 
-网页支持签到/自动化/Monitor、全部五种动作、多账号执行、配置导入导出、Folder 与话题、成员查询、Telegram 定时消息、记录迁移、Python handler 插件、AI 设置和五种失败通知。详细映射见 [docs/FEATURES.md](docs/FEATURES.md)。
+随后更新 SSH 隧道或 HTTPS 反向代理的源站端口。请确保两套容器使用**不同的容器名、不同的宿主机端口及不同的 `data/` 目录**，且不会重复使用同一份 Telegram Session 运行任务。
 
-真实 Telegram 登录/发信、AI 识别与外部通知需要您自己的有效账号、网络/API Key 和通知渠道。交付测试使用隔离的临时数据库和模拟 Telegram 返回，**未冒用真实账号、未向外部发送测试消息，未宣称线上签到已验证**。首次实际使用请先添加账号、测试连接，再手动执行一个目标任务检查回复匹配。
+**禁止用 `docker compose down -v` 或 `rm -rf data` 作为端口冲突的排障手段。**
 
-完整验证记录见 [docs/VERIFICATION.md](docs/VERIFICATION.md)。
+## 3. 数据目录和安全升级
 
-## 本地开发
+运行数据主要包括：
+
+```text
+data/
+├── dashboard.sqlite3               # 账号、任务、设置、执行记录、配置版本
+├── encryption.key                   # 账号 Session 等凭据的加密密钥
+├── jwt.key                          # 登录令牌相关密钥
+├── initial-password.txt             # 仅首次初始化存在，修改密码后删除
+├── upstream/
+│   ├── message_relay.sqlite3        # 持久投递、去重、Bot 回执与媒体组
+│   └── ...                          # 规则状态及自定义插件
+├── backups/                         # P8 加密备份 .tgsb
+└── .restore-previous/               # 恢复时可能留下的明文回退副本
+```
+
+首次部署后的部分文件或目录需使用对应功能才会出现。**`data/` 不进入 Git、不包含在 Docker 镜像中**；尤其要同时保留 `dashboard.sqlite3`、`encryption.key`、`jwt.key` 和 `upstream/`。冷启动回退目录中可能含明文密钥，必须像正式数据一样保护。
+
+### 升级已有安装
+
+在**当前实际部署所用的 Compose 目录**执行。升级前确认 `pwd`、容器名与 `./data` 挂载路径，避免误在遗留项目目录操作。
+
+```bash
+pwd
+docker compose ps
+docker compose config --quiet
+
+# 先停服务，做整个数据目录的一致性备份
+docker compose stop dashboard
+umask 077
+mkdir -p backups
+tar -czf "backups/data-before-upgrade-$(date +%Y%m%d-%H%M%S).tar.gz" data
+
+# 确认备份存在后再更新
+docker compose pull dashboard
+docker compose up -d --wait dashboard
+docker compose ps
+docker compose logs --tail=100 dashboard
+```
+
+源码仓库用户也可运行 `./scripts/backup.sh` 做停机备份（脚本结束后会尝试恢复原运行状态），但它**不会自动替你执行 Docker 镜像更新**。
+
+从旧版 `dongbo501/TG-SIGNER` 迁移时，必须先核对旧容器的持久化挂载路径并停掉旧实例；新镜像不会自动接管旧项目路径里的数据。不要在新旧项目分别运行时直接复制正在写入的 SQLite 文件。
+
+### P8 加密备份与恢复
+
+「**系统设置 → 加密备份与恢复**」支持：创建、下载、导入、校验、删除加密包，以及暂存恢复和取消待恢复。密码长度至少 16 字符，备份采用 scrypt + AES-256-GCM；请离线保存密码，遗失后无法解密恢复。
+
+1. 创建或导入 `.tgsb` 备份，使用原备份密码验证内容。
+2. 选择恢复会将内容**校验并暂存**，不会在服务运行中覆盖数据库。
+3. 管理员确认无误后手动执行 `docker compose restart dashboard`；启动脚本在应用加载数据库和密钥前执行恢复。
+4. 如恢复遇到中断，使用恢复日志和上次原数据快照进行回滚；恢复成功后核对登录、任务及转发记录。
+
+在线加密备份存在体积和文件数量限制，多个 SQLite 文件分别生成一致性快照，**不保证跨数据库的同一时刻快照**。用于整机迁移或跨版本回滚时，仍优先采用停机后的完整 `data/` 备份。详细限制和回滚流程见 [P8 维护手册](docs/P8-MAINTENANCE-RELEASE.md)。
+
+## 4. 日常管理与排障
+
+```bash
+docker compose ps                           # 检查状态
+docker compose logs --tail=100 dashboard     # 最近日志
+docker compose logs -f dashboard             # 持续日志
+docker compose restart dashboard             # 重启现有容器
+docker compose pull dashboard                # 拉取镜像
+docker compose up -d --wait dashboard        # 更新/启动
+docker compose down                          # 删除此项目容器和网络；保留 ./data
+```
+
+| 现象 | 优先检查 |
+| --- | --- |
+| `port is already allocated` | 用 `docker ps` 和 `ss` 检查旧容器占用；必要时修改宿主机端口，不改容器端口 |
+| 浏览器无法通过公网 IP 访问 8999 | 默认仅绑定 `127.0.0.1`；使用 SSH 隧道或同机 HTTPS 反向代理 |
+| 关闭浏览器后访问要求重新登录 | 检查 Cookie 安全标志是否匹配 HTTP/HTTPS、浏览器 Cookie 是否仍有效及 JWT 是否过期 |
+| 更新后像全新安装、账号不见了 | 先确认 Compose 所在目录及 `./data:/data` 是否仍指向旧数据，**不要重新初始化或删除旧数据** |
+| 任务无法收到消息 | 检查账号授权、监听状态、来源权限及转发规则；故障中心和转发记录可查看诊断信息 |
+| 转发成功但 115 没有实际转存 | Telegram 送达与 Bot 完成不同；查看「转发增强」的 Bot 回复状态，并在 Bot 聊天中核实 |
+| 更新后不健康或启动失败 | 查看 `docker compose logs`，检查数据库迁移版本与文件权限；回滚需使用升级前完整备份 |
+
+默认应用健康端点：`/api/health`。管理员登录后可打开 `/api/docs` 查看 Swagger / OpenAPI 接口。
+
+## 5. 安全和能力边界
+
+- SQLite 使用 WAL，调度器和 Telegram Session 需要**单副本、单 worker**；不要用多容器“高可用”复制方式直接共享同一目录。
+- 登录使用 Argon2 密码哈希、HttpOnly JWT Cookie 和加密 Session；首次部署后应尽快修改密码并配置 HTTPS 访问。
+- 记录导出和 Bot 结果追踪不保存消息正文；但管理员可以通过正常授权的 Telegram 客户端访问聊天内容，部署和备份权限必须妥善控制。
+- 115 Bot 回执追踪依赖 Bot 对原消息的明确回复。若对方 Bot 不采用回复关联，则只能人工确认；历史补抓严格限制来源、批次和去重条件。
+- 真实 Telegram 登录、验证码接收、消息发送、外部 Bot 转存、通知渠道以及长时间运行稳定性，仍须在部署环境中实际验收。自动化测试使用隔离的数据与模拟 Telegram 客户端。
+
+## 6. 架构与开发
+
+```text
+Docker Compose (1 service: dashboard)
+        │ 127.0.0.1:8999 → 容器 8999
+        ▼
+FastAPI + WebSocket + Next.js 静态页面
+        ├── panel_api / auth / telegram        登录及账号
+        ├── engine / tg_signer                 调度、签到和自动化
+        ├── relay / relay_history / relay_p7  消息转发、Bot 回执
+        ├── relay_backfill / relay_operations 历史补抓与故障
+        ├── task_admin                         分组、批量管理、配置版本
+        ├── backup_core / backup_api          加密备份与冷恢复
+        ├── schema_migrations / performance    数据迁移与性能采样
+        └── data/                              SQLite、状态和加密密钥
+```
+
+前端：Next.js 14 静态导出、React、Tailwind CSS、Radix UI、TanStack Table、Zustand。后端：Python 3.12、FastAPI、SQLAlchemy、APScheduler、Kurigram（兼容 Pyrogram）。内置上游执行器固定到 `fc8905db2ee74e2d9afc135cce88b50be35b6212`（原版本 `0.9.1`），已增加项目自有 Handler；**不要直接把外部最新版执行器覆盖到运行容器**。
+
+本地开发与测试：
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -r backend/requirements.txt -e './upstream/tg-signer[yaml]'
+.venv/bin/pip install -r backend/requirements.txt -e './upstream/tg-signer[yaml,speedup]'
 .venv/bin/pip install pytest pytest-asyncio ruff
 npm --prefix frontend ci
 npm --prefix frontend run build
-DATA_DIR=/tmp/tg-dashboard-dev STATIC_DIR=frontend/out \
-  .venv/bin/uvicorn backend.app.main:app --host 127.0.0.1 --port 8081
-```
 
-静态导出与后端同源，修改页面后重新构建。启动会在开发数据目录生成独立初始密码。
-
-```bash
-.venv/bin/ruff check backend
+.venv/bin/ruff check backend --select E4,E7,E9,F,I,B --ignore B008
 .venv/bin/python -m pytest -q backend/tests
 .venv/bin/python -m pytest -q upstream/tg-signer/tests
 npm --prefix frontend run typecheck
@@ -232,15 +261,10 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-## 镜像构建与发布
+GitHub Actions 会在 PR 和 `main` 推送时运行后端、前端、Docker 和 ARM64 验证；**仅主分支 CI 成功后**，GHCR 发布工作流才自动构建 `linux/amd64` + `linux/arm64` 多平台镜像，并写入 `latest` 及 `sha-<12位提交SHA>` 标签。建议升级时记录镜像标签或 digest 以便回滚。
 
-镜像地址：`ghcr.io/lwhx/tg-signers:latest`（Linux amd64）。部署方式见上文「单容器部署」，
-详细说明见 [release/INSTALL.txt](release/INSTALL.txt)。镜像不包含账号、任务数据或密钥。
+补充资料：[安装手册](release/INSTALL.txt) · [GHCR 发布与迁移](docs/GHCR-DEPLOY.md) · [架构说明](docs/ARCHITECTURE.md) · [完整功能表](docs/FEATURES.md) · [验证说明](docs/VERIFICATION.md)
 
-从源码重新构建并发布镜像：
+## 许可证和致谢
 
-```bash
-# 先完成本地测试，再构建
-docker build -t ghcr.io/lwhx/tg-signers:latest .
-docker push ghcr.io/lwhx/tg-signers:latest
-```
+感谢 [dongbo501/TG-SIGNER](https://github.com/dongbo501/TG-SIGNER) Dashboard 和 [amchii/tg-signer](https://github.com/amchii/tg-signer) 上游执行器。第三方代码和许可证按各自仓库及本仓库保留的原始声明执行。
